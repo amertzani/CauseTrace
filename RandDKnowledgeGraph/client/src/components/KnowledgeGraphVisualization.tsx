@@ -578,6 +578,14 @@ export function KnowledgeGraphVisualization({
                                 <span className="font-medium">Added:</span> {new Date(edge.uploadedAt).toLocaleDateString()}
                               </div>
                             )}
+                            {edge.agent && (
+                              <div className="mb-1 mt-2 pt-2 border-t">
+                                <span className="font-medium text-xs">Processed by:</span>
+                                <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                                  {edge.agent.replace(' Agent', '')}
+                                </span>
+                              </div>
+                            )}
                             {edge.isInferred && (
                               <div className="mt-2 pt-2 border-t">
                                 <span className="text-purple-400 font-medium text-xs">⚠️ Inferred Fact</span>

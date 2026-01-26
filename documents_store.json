@@ -1,15 +1,42 @@
 {
-  "last_updated": "2026-01-03T21:27:57.424573",
-  "total_documents": 1,
+  "last_updated": "2026-01-26T19:47:40.827905",
+  "total_documents": 4,
   "documents": [
     {
       "id": "1",
-      "name": "author-book-proposal-form-SGMAS-MertzaniPitt.docx",
-      "type": "docx",
-      "size": 109456,
-      "uploaded_at": "2026-01-03T21:27:57.424558",
+      "name": "test.txt",
+      "type": "txt",
+      "size": 49,
+      "uploaded_at": "2026-01-05T23:52:39.710508",
       "status": "completed",
-      "facts_extracted": 9468
+      "facts_extracted": 2
+    },
+    {
+      "id": "2",
+      "name": "carbonfacts.docx",
+      "type": "docx",
+      "size": 13360,
+      "uploaded_at": "2026-01-05T23:56:17.193633",
+      "status": "completed",
+      "facts_extracted": 3
+    },
+    {
+      "id": "3",
+      "name": "facts.csv",
+      "type": "csv",
+      "size": 49,
+      "uploaded_at": "2026-01-06T00:02:54.587610",
+      "status": "completed",
+      "facts_extracted": 11
+    },
+    {
+      "id": "4",
+      "name": "test5.txt",
+      "type": "txt",
+      "size": 1117,
+      "uploaded_at": "2026-01-26T19:47:40.827892",
+      "status": "completed",
+      "facts_extracted": 40
     }
   ]
 }

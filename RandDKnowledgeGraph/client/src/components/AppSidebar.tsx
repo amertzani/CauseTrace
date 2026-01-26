@@ -6,6 +6,7 @@ import {
   FileText,
   Download,
   Settings,
+  FlaskConical,
 } from "lucide-react";
 import {
   Sidebar,
@@ -47,6 +48,11 @@ const menuItems = [
     title: "Documents",
     url: "/documents",
     icon: FileText,
+  },
+  {
+    title: "Simulator",
+    url: "/simulator",
+    icon: FlaskConical,
   },
 ];
 

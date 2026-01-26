@@ -4,6 +4,8 @@ huggingface_hub
 PyPDF2
 python-docx
 pandas
+openpyxl  # For Excel XLSX file support
+chardet  # For encoding detection in text files
 networkx
 matplotlib
 plotly

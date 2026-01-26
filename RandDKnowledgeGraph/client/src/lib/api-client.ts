@@ -549,6 +549,72 @@ class HuggingFaceApiClient {
       method: "DELETE",
     });
   }
+
+  // Simulator - Run Experiment
+  async runExperiment(experimentConfig: any): Promise<ApiResponse<any>> {
+    console.log('📡 API: runExperiment called with:', experimentConfig);
+    if (USE_LOCAL_BACKEND) {
+      const response = await this.request("/api/simulator/experiment", {
+        method: "POST",
+        body: JSON.stringify(experimentConfig),
+      }, 300000); // 5 minutes timeout for experiments
+      console.log('📡 API: runExperiment response:', response);
+      return response;
+    }
+    return {
+      success: false,
+      error: "Simulator requires local backend",
+    };
+  }
+
+  // Simulator - Test Scenario
+  async testScenario(scenarioData: any): Promise<ApiResponse<any>> {
+    console.log('📡 API: testScenario called with:', scenarioData);
+    if (USE_LOCAL_BACKEND) {
+      const response = await this.request("/api/simulator/scenario", {
+        method: "POST",
+        body: JSON.stringify(scenarioData),
+      }, 300000); // 5 minutes timeout for scenarios
+      console.log('📡 API: testScenario response:', response);
+      return response;
+    }
+    return {
+      success: false,
+      error: "Simulator requires local backend",
+    };
+  }
+
+  // Simulator - Get Experiments
+  async getExperiments(): Promise<ApiResponse<any>> {
+    console.log('📡 API: getExperiments called');
+    if (USE_LOCAL_BACKEND) {
+      const response = await this.request("/api/simulator/experiments", {
+        method: "GET",
+      });
+      console.log('📡 API: getExperiments response:', response);
+      return response;
+    }
+    return {
+      success: true,
+      data: { experiments: [] },
+    };
+  }
+
+  // Simulator - Delete Experiment
+  async deleteExperiment(experimentId: string): Promise<ApiResponse<any>> {
+    console.log('📡 API: deleteExperiment called with:', experimentId);
+    if (USE_LOCAL_BACKEND) {
+      const response = await this.request(`/api/simulator/experiments/${experimentId}`, {
+        method: "DELETE",
+      });
+      console.log('📡 API: deleteExperiment response:', response);
+      return response;
+    }
+    return {
+      success: false,
+      error: "Simulator requires local backend",
+    };
+  }
 }
 
 // Export singleton instance

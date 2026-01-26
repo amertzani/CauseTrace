@@ -14,6 +14,7 @@ import GraphPage from "@/pages/graph";
 import ChatPage from "@/pages/chat";
 import DocumentsPage from "@/pages/documents";
 import ImportExportPage from "@/pages/import-export";
+import SimulatorPage from "@/pages/simulator";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -26,6 +27,7 @@ function Router() {
       <Route path="/chat" component={ChatPage} />
       <Route path="/documents" component={DocumentsPage} />
       <Route path="/import-export" component={ImportExportPage} />
+      <Route path="/simulator" component={SimulatorPage} />
       <Route component={NotFound} />
     </Switch>
   );

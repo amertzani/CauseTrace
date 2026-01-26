@@ -187,10 +187,11 @@ export function KnowledgeBaseTable({ facts, onEdit, onDelete }: KnowledgeBaseTab
                 <TableHead className="w-[13%]">Predicate</TableHead>
                 <TableHead className="w-[18%]">Object</TableHead>
                 <TableHead className="w-[10%]">Details</TableHead>
-                <TableHead className="w-[13%]">Source</TableHead>
-                <TableHead className="w-[13%]">Uploaded</TableHead>
-                <TableHead className="w-[10%]">Type</TableHead>
-                <TableHead className="w-[10%]">Confidence</TableHead>
+                <TableHead className="w-[12%]">Source</TableHead>
+                <TableHead className="w-[12%]">Uploaded</TableHead>
+                <TableHead className="w-[8%]">Type</TableHead>
+                <TableHead className="w-[8%]">Confidence</TableHead>
+                <TableHead className="w-[10%]">Agent</TableHead>
                 <TableHead className="w-[5%] text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -303,6 +304,24 @@ export function KnowledgeBaseTable({ facts, onEdit, onDelete }: KnowledgeBaseTab
                         ? fact.confidence.toFixed(2) 
                         : "0.70"}
                     </span>
+                  </TableCell>
+                  <TableCell className="text-sm">
+                    {fact.agent ? (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 cursor-help">
+                              {fact.agent.replace(' Agent', '')}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p className="text-sm">Processed by {fact.agent}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    ) : (
+                      <span className="text-muted-foreground text-xs">Manual</span>
+                    )}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-2">

@@ -15,6 +15,7 @@ build/
 # Runtime data files (generated at runtime, not source code)
 *.pkl
 knowledge_backup.json
+experiments_store.json
 
 # IDE
 .vscode/

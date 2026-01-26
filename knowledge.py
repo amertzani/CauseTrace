@@ -1305,7 +1305,7 @@ def fact_exists(subject: str, predicate: str, object_val: str) -> bool:
     
     return False
 
-def add_to_graph(text, source_document: str = "manual", uploaded_at: str = None):
+def add_to_graph(text, source_document: str = "manual", uploaded_at: str = None, agent_name: str = None):
     """
     Extract knowledge from text and add to graph.
     Uses the new 7-step pipeline by default, with fallback to legacy methods.
@@ -1314,6 +1314,7 @@ def add_to_graph(text, source_document: str = "manual", uploaded_at: str = None)
         text: Text to extract knowledge from
         source_document: Name of the source document (default: "manual")
         uploaded_at: ISO format timestamp when the fact was added (default: current time)
+        agent_name: Name of the agent that processed the file (default: None for manual)
     
     Returns:
         str: Status message with extraction method and counts
@@ -1441,6 +1442,10 @@ def add_to_graph(text, source_document: str = "manual", uploaded_at: str = None)
                     # CRITICAL: Always store source document for new facts
                     # This ensures all facts have source tracking
                     add_fact_source_document(subject, predicate, object_val, source_document, uploaded_at)
+                    
+                    # Store agent information if provided
+                    if agent_name:
+                        add_fact_agent(subject, predicate, object_val, agent_name)
                     
                     added_count += 1
                 else:
@@ -1658,6 +1663,13 @@ def add_to_graph(text, source_document: str = "manual", uploaded_at: str = None)
         # ENHANCED: Always add source document, even if fact already exists
         # This allows tracking multiple sources for the same fact
         add_fact_source_document(s, p, o, source_document, uploaded_at)
+        # Store agent information if provided
+        if agent_name:
+            add_fact_agent(s, p, o, agent_name)
+    
+    # Store agent name for all facts extracted from this text
+    # Agent name is passed from file_processing.py via add_to_graph()
+    agent_name_for_facts = agent_name if agent_name else None
     
     # Process Triplex triples (if available) - these are highest quality
     for s, p, o, details in triplex_triples:
@@ -1691,6 +1703,9 @@ def add_to_graph(text, source_document: str = "manual", uploaded_at: str = None)
         # ENHANCED: Always add source document, even if fact already exists
         # This allows tracking multiple sources for the same fact
         add_fact_source_document(s, p, o, source_document, uploaded_at)
+        # Store agent information if provided
+        if agent_name:
+            add_fact_agent(s, p, o, agent_name)
     
     # Process triples with context (regex-based with entity cleaning)
     for s, p, o, details in new_triples_with_context:
@@ -1720,6 +1735,9 @@ def add_to_graph(text, source_document: str = "manual", uploaded_at: str = None)
         
         # Store source document and timestamp
         add_fact_source_document(s, p, o, source_document, uploaded_at)
+        # Store agent information if provided
+        if agent_name:
+            add_fact_agent(s, p, o, agent_name)
         
         added_facts.add(fact_key)
         added_count += 1
@@ -1790,6 +1808,9 @@ def add_to_graph(text, source_document: str = "manual", uploaded_at: str = None)
         # ENHANCED: Always add source document, even if fact already exists
         # This allows tracking multiple sources for the same fact
         add_fact_source_document(s, p, o, source_document, uploaded_at)
+        # Store agent information if provided
+        if agent_name:
+            add_fact_agent(s, p, o, agent_name)
         regex_triples_processed += 1
     
     # Count triples by method (only count what was actually added)
@@ -2568,6 +2589,79 @@ def get_fact_confidence(subject: str, predicate: str, object_val: str) -> float:
                 return 0.7  # Default confidence
     
     return 0.7  # Default confidence if not found
+
+def add_fact_agent(subject: str, predicate: str, object_val: str, agent_name: str):
+    """
+    Store the agent name that processed/created a specific fact.
+    
+    Args:
+        subject: The subject of the main fact
+        predicate: The predicate of the main fact
+        object_val: The object of the main fact
+        agent_name: Name of the agent that processed the file (e.g., "PDF Agent", "CSV Agent")
+    """
+    global graph
+    import rdflib
+    from urllib.parse import quote
+    
+    if not agent_name:
+        return
+    
+    # Create the fact identifier
+    fact_id = f"{subject}|{predicate}|{object_val}"
+    fact_id_clean = fact_id.strip().replace(' ', '_')
+    fact_id_uri = rdflib.URIRef(f"urn:fact:{quote(fact_id_clean, safe='')}")
+    
+    # Store agent name with special predicate
+    agent_predicate = rdflib.URIRef("urn:processed_by_agent")
+    agent_literal = rdflib.Literal(agent_name.strip())
+    
+    # Check if agent already exists for this fact
+    existing_agent = get_fact_agent(subject, predicate, object_val)
+    if existing_agent == agent_name.strip():
+        return  # Already stored
+    
+    # Remove old agent if different
+    if existing_agent:
+        triples_to_remove = []
+        for s, p, o in graph:
+            if str(s) == str(fact_id_uri) and str(p) == str(agent_predicate):
+                triples_to_remove.append((s, p, o))
+        for triple in triples_to_remove:
+            graph.remove(triple)
+    
+    # Add new agent
+    graph.add((fact_id_uri, agent_predicate, agent_literal))
+
+def get_fact_agent(subject: str, predicate: str, object_val: str) -> str:
+    """
+    Retrieve the agent name that processed/created a specific fact.
+    
+    Args:
+        subject: The subject of the main fact
+        predicate: The predicate of the main fact
+        object_val: The object of the main fact
+    
+    Returns:
+        Agent name string, or empty string if not found
+    """
+    global graph
+    import rdflib
+    from urllib.parse import quote
+    
+    # Create the fact identifier
+    fact_id = f"{subject}|{predicate}|{object_val}"
+    fact_id_clean = fact_id.strip().replace(' ', '_')
+    fact_id_uri = rdflib.URIRef(f"urn:fact:{quote(fact_id_clean, safe='')}")
+    
+    # Look for agent triple
+    agent_predicate = rdflib.URIRef("urn:processed_by_agent")
+    
+    for s, p, o in graph:
+        if str(s) == str(fact_id_uri) and str(p) == str(agent_predicate):
+            return str(o).strip()
+    
+    return ""  # No agent found
 
 def get_fact_source_document(subject: str, predicate: str, object_val: str) -> list[tuple[str, str]]:
     """

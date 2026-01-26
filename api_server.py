@@ -42,6 +42,8 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import os
 import tempfile
+import json
+from datetime import datetime
 
 # Import your existing modules
 from responses import respond as rqa_respond
@@ -67,22 +69,24 @@ async def lifespan(app: FastAPI):
     # Startup
     print("Initializing knowledge graph...")
     try:
-        # Clear all facts on every restart
-        print("🗑️  Clearing all facts on startup...")
-        delete_result = kb_delete_all_knowledge()
-        print(f"Startup: {delete_result}")
-        
-        # Also clear all documents
-        print("🗑️  Clearing all documents...")
-        deleted_docs = ds_delete_all_documents()
-        if deleted_docs > 0:
-            print(f"✅ Deleted {deleted_docs} documents")
-        else:
-            print("✅ No documents to delete")
-        
-        # Verify graph is empty after clearing
+        # Load existing knowledge graph instead of clearing
+        print("📂 Loading existing knowledge graph...")
+        load_result = kb_load_knowledge_graph()
         fact_count = len(kb_graph)
-        print(f"✅ Knowledge graph initialized with {fact_count} facts (fresh start)")
+        print(f"✅ Knowledge graph loaded with {fact_count} facts")
+        
+        # Load and verify documents
+        all_docs = get_all_documents()
+        print(f"✅ Found {len(all_docs)} documents in store")
+        
+        # Clean up documents without facts (but don't delete all documents)
+        # This only removes documents that truly have no facts
+        if fact_count > 0:
+            cleaned = cleanup_documents_without_facts()
+            if cleaned > 0:
+                print(f"🧹 Cleaned up {cleaned} documents without facts")
+        else:
+            print("⚠️  Knowledge graph is empty - documents will be preserved until facts are added")
         
         # IMPORTANT: Verify the graph file is actually empty
         import os
@@ -476,24 +480,38 @@ async def upload_file_endpoint(files: List[UploadFile] = File(...)):
             else:
                 print("   ⚠️  WARNING: Graph is empty after processing!")
             
-            # Save document metadata - ONLY if facts were actually extracted
-            # Save document if ANY facts were extracted (even if some were duplicates)
+            # Save document metadata - Count facts per document by checking source
+            # This ensures each document gets the correct fact count
             processed_docs = []
-            if facts_extracted > 0:
-                # Save document if we extracted facts (use facts_extracted, not added_count)
-                # This ensures documents are saved even if all facts were duplicates
-                for file_info in file_info_list:
+            
+            # Count facts per document using helper function
+            from documents_store import count_facts_for_document
+            
+            # Always try to save documents, even if total facts_extracted is 0
+            # because individual files might have facts
+            for file_info in file_info_list:
+                document_name = file_info['name']
+                
+                # Count facts that have this document as source
+                facts_for_this_doc = count_facts_for_document(document_name)
+                
+                # Save document if it has facts
+                if facts_for_this_doc > 0:
                     doc = add_document(
-                        name=file_info['name'],
+                        name=document_name,
                         size=file_info['size'],
                         file_type=file_info['type'],
-                        facts_extracted=facts_extracted  # Use total extracted, not just added
+                        facts_extracted=facts_for_this_doc
                     )
-                    if doc:  # Only append if document was saved (has facts > 0)
+                    if doc:
                         processed_docs.append(doc)
-                        print(f"✅ Saved document {file_info['name']} with {facts_extracted} facts extracted")
-            else:
-                # No facts extracted - PERMANENTLY REMOVE any existing documents with this name
+                        print(f"✅ Saved document {document_name} with {facts_for_this_doc} facts")
+                else:
+                    print(f"⚠️  Document {document_name} has 0 facts - not saved")
+            
+            # If no documents were saved and no facts were extracted overall, clean up
+            if len(processed_docs) == 0 and facts_extracted == 0:
+                # No facts extracted from any file - PERMANENTLY REMOVE any existing documents with these names
                 print(f"⚠️  No facts extracted from {len(files)} file(s) - REMOVING documents")
                 for file_info in file_info_list:
                     from documents_store import load_documents, save_documents
@@ -716,6 +734,11 @@ async def get_facts_endpoint(
                         metadata_map[fact_id_uri]['confidence'] = float(str(o))
                     except (ValueError, TypeError):
                         metadata_map[fact_id_uri]['confidence'] = 0.7  # Default confidence
+                elif 'processed_by_agent' in predicate_str:
+                    if fact_id_uri not in metadata_map:
+                        metadata_map[fact_id_uri] = {'source_documents': []}
+                    # Store agent name
+                    metadata_map[fact_id_uri]['agent'] = str(o).strip()
         
         # Pass 2: Collect facts and match with metadata using fact_id URI (O(n))
         fact_index = 0
@@ -725,7 +748,8 @@ async def get_facts_endpoint(
             if ('fact_subject' in predicate_str or 'fact_predicate' in predicate_str or 
                 'fact_object' in predicate_str or 'has_details' in predicate_str or 
                 'source_document' in predicate_str or 'uploaded_at' in predicate_str or
-                'is_inferred' in predicate_str or 'confidence' in predicate_str):
+                'is_inferred' in predicate_str or 'confidence' in predicate_str or
+                'processed_by_agent' in predicate_str):
                 continue
             
             fact_index += 1
@@ -805,6 +829,9 @@ async def get_facts_endpoint(
             # Get confidence score
             confidence = metadata.get('confidence', 0.7)  # Default confidence if not found
             
+            # Get agent name
+            agent_name = metadata.get('agent', '')  # Agent that processed the file
+            
             # Apply filters
             if not include_inferred and is_inferred:
                 continue  # Skip inferred facts if filter is enabled
@@ -823,7 +850,8 @@ async def get_facts_endpoint(
                 "sourceDocuments": all_sources if all_sources else None,  # New: all sources
                 "isInferred": is_inferred,  # Backward compatibility: marks if fact is inferred (boolean)
                 "type": fact_type,  # Primary field: type of fact ("original" or "inferred")
-                "confidence": confidence  # New: confidence score (0.0 to 1.0)
+                "confidence": confidence,  # New: confidence score (0.0 to 1.0)
+                "agent": agent_name if agent_name else None  # Agent that processed the file
             })
         
         print(f"✅ GET /api/knowledge/facts: Returning {len(facts)} facts")
@@ -864,21 +892,31 @@ async def get_documents_endpoint(include_all: bool = False):
         include_all: If True, return all documents. If False (default), only return documents that contributed facts.
     """
     try:
-        # FIRST: ALWAYS clean up documents without facts before returning
-        # This ensures documents with 0 facts are PERMANENTLY removed
-        cleanup_documents_without_facts()
-        
         all_documents = get_all_documents()
         
-        # DOUBLE CHECK: Filter out any documents with facts_extracted = 0
-        # This is a safety net in case cleanup didn't catch everything
-        all_documents = [doc for doc in all_documents if doc.get('facts_extracted', 0) > 0]
+        # Update fact counts for existing documents to ensure accuracy
+        # This syncs document fact counts with actual facts in the graph
+        from documents_store import count_facts_for_document, save_documents
+        updated_docs = []
+        for doc in all_documents:
+            doc_name = doc.get('name', '')
+            if doc_name:
+                actual_facts = count_facts_for_document(doc_name)
+                if actual_facts != doc.get('facts_extracted', 0):
+                    doc['facts_extracted'] = actual_facts
+                    print(f"🔄 Updated {doc_name}: fact count → {actual_facts}")
+                updated_docs.append(doc)
+        
+        if updated_docs != all_documents:
+            # Save updated documents if counts changed
+            save_documents(updated_docs)
+            all_documents = updated_docs
         
         # Filter: ONLY return documents that have contributed facts (facts_extracted > 0)
         # This ensures we NEVER show documents without facts
         if not include_all:
-            documents = all_documents  # Already filtered above
-            print(f"✅ GET /api/documents: Returning {len(documents)} documents with facts")
+            documents = [doc for doc in all_documents if doc.get('facts_extracted', 0) > 0]
+            print(f"✅ GET /api/documents: Returning {len(documents)} documents with facts (out of {len(all_documents)} total)")
         else:
             documents = all_documents
             print(f"✅ GET /api/documents: Returning {len(documents)} documents (all)")
@@ -886,11 +924,13 @@ async def get_documents_endpoint(include_all: bool = False):
         return {
             "documents": documents,
             "total_documents": len(documents),
-            "total_all_documents": len(documents),  # Both are the same now (filtered)
+            "total_all_documents": len(all_documents),
             "status": "success"
         }
     except Exception as e:
         print(f"❌ Error getting documents: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error getting documents: {str(e)}")
 
 @app.delete("/api/documents/{document_id}")
@@ -1183,6 +1223,233 @@ async def save_knowledge_endpoint():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error saving knowledge: {str(e)}")
+
+# ==========================================================
+# Simulator Endpoints
+# ==========================================================
+
+# In-memory storage for experiments (could be replaced with database)
+experiments_store: Dict[str, Any] = {}
+experiments_file = "experiments_store.json"
+
+def load_experiments():
+    """Load experiments from file"""
+    global experiments_store
+    try:
+        if os.path.exists(experiments_file):
+            with open(experiments_file, 'r') as f:
+                experiments_store = json.load(f)
+    except Exception as e:
+        print(f"Error loading experiments: {e}")
+        experiments_store = {}
+
+def save_experiments():
+    """Save experiments to file"""
+    try:
+        with open(experiments_file, 'w') as f:
+            json.dump(experiments_store, f, indent=2)
+    except Exception as e:
+        print(f"Error saving experiments: {e}")
+
+# Load experiments on startup
+load_experiments()
+
+class ExperimentRequest(BaseModel):
+    name: str
+    description: str
+    inputData: str
+    scenarioType: str  # "hypothesis" | "prediction" | "what_if" | "validation"
+    targetNodes: Optional[List[str]] = []
+    parameters: Optional[Dict[str, Any]] = {}
+
+class ScenarioRequest(BaseModel):
+    scenarioType: str
+    inputData: str
+    knowledgeGraph: Optional[Dict[str, Any]] = None
+
+def run_experiment_logic(config: ExperimentRequest) -> Dict[str, Any]:
+    """
+    Core logic for running experiments based on knowledge graph.
+    This analyzes the input data against the knowledge graph.
+    """
+    try:
+        # Parse input data (could be JSON or text)
+        input_data = config.inputData.strip()
+        try:
+            # Try to parse as JSON
+            if input_data.startswith('{') or input_data.startswith('['):
+                parsed_data = json.loads(input_data)
+            else:
+                parsed_data = {"text": input_data}
+        except json.JSONDecodeError:
+            parsed_data = {"text": input_data}
+        
+        # Get relevant facts from knowledge graph
+        relevant_facts = []
+        search_terms = []
+        
+        # Extract search terms from input data
+        if isinstance(parsed_data, dict):
+            search_terms = [str(v).lower() for v in parsed_data.values() if isinstance(v, str)]
+        elif isinstance(parsed_data, str):
+            search_terms = [parsed_data.lower()]
+        
+        # Also use target nodes if provided
+        if config.targetNodes:
+            search_terms.extend([node.lower() for node in config.targetNodes])
+        
+        # Search knowledge graph for relevant facts
+        for subject, predicate, obj in kb_graph:
+            subject_str = str(subject).split(':')[-1] if ':' in str(subject) else str(subject)
+            predicate_str = str(predicate).split(':')[-1] if ':' in str(predicate) else str(predicate)
+            object_str = str(obj)
+            
+            # Check if any search term matches
+            for term in search_terms:
+                if term in subject_str.lower() or term in predicate_str.lower() or term in object_str.lower():
+                    relevant_facts.append({
+                        "subject": subject_str,
+                        "predicate": predicate_str,
+                        "object": object_str
+                    })
+                    break
+        
+        # Analyze based on scenario type
+        analysis = {
+            "scenario_type": config.scenarioType,
+            "relevant_facts_count": len(relevant_facts),
+            "relevant_facts": relevant_facts[:20],  # Limit to first 20
+            "analysis": {}
+        }
+        
+        if config.scenarioType == "hypothesis":
+            # Test if hypothesis is supported by facts
+            analysis["analysis"] = {
+                "hypothesis": config.inputData,
+                "supporting_facts": len(relevant_facts),
+                "conclusion": "Hypothesis is supported" if len(relevant_facts) > 0 else "Hypothesis needs more evidence"
+            }
+        elif config.scenarioType == "prediction":
+            # Make predictions based on patterns
+            analysis["analysis"] = {
+                "input": parsed_data,
+                "predicted_outcomes": [
+                    f"Based on {len(relevant_facts)} related facts, likely outcomes include..."
+                ],
+                "confidence": min(0.9, len(relevant_facts) / 10.0)
+            }
+        elif config.scenarioType == "what_if":
+            # Explore what-if scenarios
+            analysis["analysis"] = {
+                "scenario": config.inputData,
+                "affected_entities": list(set([f["subject"] for f in relevant_facts[:10]])),
+                "potential_impacts": f"Analysis of {len(relevant_facts)} related facts suggests..."
+            }
+        elif config.scenarioType == "validation":
+            # Validate against knowledge graph
+            analysis["analysis"] = {
+                "validation_target": parsed_data,
+                "matches_found": len(relevant_facts),
+                "is_valid": len(relevant_facts) > 0,
+                "validation_details": "Data matches knowledge graph" if len(relevant_facts) > 0 else "No matching data found"
+            }
+        
+        return {
+            "status": "success",
+            "results": analysis,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+@app.post("/api/simulator/experiment")
+async def run_experiment_endpoint(request: ExperimentRequest):
+    """Run an experiment based on knowledge graph"""
+    try:
+        # Run the experiment logic
+        result = run_experiment_logic(request)
+        
+        # Store the experiment
+        experiment_id = f"exp_{int(datetime.now().timestamp() * 1000)}"
+        experiment_data = {
+            "id": experiment_id,
+            "config": request.dict(),
+            "status": "completed" if result.get("status") == "success" else "failed",
+            "results": result.get("results"),
+            "error": result.get("error"),
+            "timestamp": result.get("timestamp", datetime.now().isoformat())
+        }
+        
+        experiments_store[experiment_id] = experiment_data
+        save_experiments()
+        
+        return {
+            "id": experiment_id,
+            "results": result.get("results"),
+            "status": "success"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error running experiment: {str(e)}")
+
+@app.post("/api/simulator/scenario")
+async def test_scenario_endpoint(request: ScenarioRequest):
+    """Test a scenario against the knowledge graph"""
+    try:
+        # Create a temporary experiment config
+        temp_config = ExperimentRequest(
+            name=f"Scenario Test - {request.scenarioType}",
+            description="Quick scenario test",
+            inputData=request.inputData,
+            scenarioType=request.scenarioType,
+            targetNodes=[],
+            parameters={}
+        )
+        
+        # Run the scenario logic
+        result = run_experiment_logic(temp_config)
+        
+        return {
+            "results": result.get("results"),
+            "status": "success"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error testing scenario: {str(e)}")
+
+@app.get("/api/simulator/experiments")
+async def get_experiments_endpoint():
+    """Get all stored experiments"""
+    try:
+        # Convert dict to list
+        experiments_list = list(experiments_store.values())
+        # Sort by timestamp (newest first)
+        experiments_list.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        
+        return {
+            "experiments": experiments_list,
+            "status": "success"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting experiments: {str(e)}")
+
+@app.delete("/api/simulator/experiments/{experiment_id}")
+async def delete_experiment_endpoint(experiment_id: str):
+    """Delete an experiment"""
+    try:
+        if experiment_id in experiments_store:
+            del experiments_store[experiment_id]
+            save_experiments()
+            return {
+                "message": "Experiment deleted",
+                "status": "success"
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Experiment not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting experiment: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
