@@ -83,10 +83,9 @@ export type GraphEdge = z.infer<typeof graphEdgeSchema>;
 // Simulator Schemas
 export const experimentConfigSchema = z.object({
   name: z.string(),
-  description: z.string(),
-  inputData: z.string(),
+  scenarioDescription: z.string(), // Natural language scenario description
+  inputData: z.string().optional(), // Optional extra data not in knowledge base
   scenarioType: z.enum(["hypothesis", "prediction", "what_if", "validation"]),
-  targetNodes: z.array(z.string()).optional(),
   parameters: z.record(z.any()).optional(),
 });
 

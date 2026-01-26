@@ -43,6 +43,7 @@ from typing import List, Optional, Dict, Any
 import os
 import tempfile
 import json
+import re
 from datetime import datetime
 
 # Import your existing modules
@@ -1256,10 +1257,9 @@ load_experiments()
 
 class ExperimentRequest(BaseModel):
     name: str
-    description: str
-    inputData: str
+    scenarioDescription: str  # Natural language scenario description
+    inputData: Optional[str] = None  # Optional extra data not in knowledge base
     scenarioType: str  # "hypothesis" | "prediction" | "what_if" | "validation"
-    targetNodes: Optional[List[str]] = []
     parameters: Optional[Dict[str, Any]] = {}
 
 class ScenarioRequest(BaseModel):
@@ -1270,33 +1270,43 @@ class ScenarioRequest(BaseModel):
 def run_experiment_logic(config: ExperimentRequest) -> Dict[str, Any]:
     """
     Core logic for running experiments based on knowledge graph.
-    This analyzes the input data against the knowledge graph.
+    Analyzes natural language scenario description against the knowledge graph.
     """
     try:
-        # Parse input data (could be JSON or text)
-        input_data = config.inputData.strip()
-        try:
-            # Try to parse as JSON
-            if input_data.startswith('{') or input_data.startswith('['):
-                parsed_data = json.loads(input_data)
-            else:
-                parsed_data = {"text": input_data}
-        except json.JSONDecodeError:
-            parsed_data = {"text": input_data}
+        # Parse optional input data if provided
+        additional_data = None
+        if config.inputData and config.inputData.strip():
+            try:
+                if config.inputData.strip().startswith('{') or config.inputData.strip().startswith('['):
+                    additional_data = json.loads(config.inputData.strip())
+                else:
+                    additional_data = {"text": config.inputData.strip()}
+            except json.JSONDecodeError:
+                additional_data = {"text": config.inputData.strip()}
+        
+        # Extract keywords and entities from natural language scenario description
+        scenario_text = config.scenarioDescription.lower()
+        
+        # Simple keyword extraction - split by common words and punctuation
+        # Remove common stop words for better matching
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'what', 'if', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can'}
+        words = re.findall(r'\b\w+\b', scenario_text)
+        search_terms = [w for w in words if w not in stop_words and len(w) > 2]
+        
+        # Also extract potential entity names (capitalized words or quoted strings)
+        capitalized_words = re.findall(r'\b[A-Z][a-z]+\b', config.scenarioDescription)
+        search_terms.extend([w.lower() for w in capitalized_words])
+        
+        # Extract quoted strings
+        quoted_strings = re.findall(r'"([^"]+)"', config.scenarioDescription)
+        search_terms.extend([s.lower() for s in quoted_strings])
+        
+        # Remove duplicates and keep only meaningful terms
+        search_terms = list(set([term for term in search_terms if len(term) > 2]))[:20]  # Limit to 20 terms
         
         # Get relevant facts from knowledge graph
         relevant_facts = []
-        search_terms = []
-        
-        # Extract search terms from input data
-        if isinstance(parsed_data, dict):
-            search_terms = [str(v).lower() for v in parsed_data.values() if isinstance(v, str)]
-        elif isinstance(parsed_data, str):
-            search_terms = [parsed_data.lower()]
-        
-        # Also use target nodes if provided
-        if config.targetNodes:
-            search_terms.extend([node.lower() for node in config.targetNodes])
+        fact_scores = {}  # Track relevance scores
         
         # Search knowledge graph for relevant facts
         for subject, predicate, obj in kb_graph:
@@ -1304,54 +1314,126 @@ def run_experiment_logic(config: ExperimentRequest) -> Dict[str, Any]:
             predicate_str = str(predicate).split(':')[-1] if ':' in str(predicate) else str(predicate)
             object_str = str(obj)
             
-            # Check if any search term matches
+            # Calculate relevance score based on term matches
+            score = 0
+            fact_text = f"{subject_str} {predicate_str} {object_str}".lower()
+            
             for term in search_terms:
-                if term in subject_str.lower() or term in predicate_str.lower() or term in object_str.lower():
+                if term in fact_text:
+                    # Higher score for exact matches in subject/object
+                    if term in subject_str.lower() or term in object_str.lower():
+                        score += 3
+                    elif term in predicate_str.lower():
+                        score += 2
+                    else:
+                        score += 1
+            
+            if score > 0:
+                fact_id = f"{subject_str}|{predicate_str}|{object_str}"
+                if fact_id not in fact_scores or fact_scores[fact_id] < score:
                     relevant_facts.append({
                         "subject": subject_str,
                         "predicate": predicate_str,
-                        "object": object_str
+                        "object": object_str,
+                        "relevance_score": score
                     })
-                    break
+                    fact_scores[fact_id] = score
+        
+        # Sort by relevance score (highest first)
+        relevant_facts.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+        relevant_facts = relevant_facts[:30]  # Limit to top 30 most relevant
+        
+        # Extract entities mentioned in scenario
+        mentioned_entities = list(set([f["subject"] for f in relevant_facts[:15]] + [f["object"] for f in relevant_facts[:15]]))
         
         # Analyze based on scenario type
         analysis = {
             "scenario_type": config.scenarioType,
+            "scenario_description": config.scenarioDescription,
             "relevant_facts_count": len(relevant_facts),
-            "relevant_facts": relevant_facts[:20],  # Limit to first 20
+            "relevant_facts": relevant_facts,
+            "mentioned_entities": mentioned_entities[:10],
+            "search_terms_used": search_terms[:10],
+            "additional_data": additional_data,
             "analysis": {}
         }
         
         if config.scenarioType == "hypothesis":
             # Test if hypothesis is supported by facts
+            conclusion = "Hypothesis is supported by knowledge graph" if len(relevant_facts) >= 3 else \
+                        "Hypothesis has partial support" if len(relevant_facts) > 0 else \
+                        "Hypothesis needs more evidence in knowledge graph"
+            
             analysis["analysis"] = {
-                "hypothesis": config.inputData,
-                "supporting_facts": len(relevant_facts),
-                "conclusion": "Hypothesis is supported" if len(relevant_facts) > 0 else "Hypothesis needs more evidence"
+                "hypothesis": config.scenarioDescription,
+                "supporting_facts_count": len(relevant_facts),
+                "conclusion": conclusion,
+                "confidence": min(1.0, len(relevant_facts) / 5.0),
+                "key_evidence": [f"{f['subject']} {f['predicate']} {f['object']}" for f in relevant_facts[:5]]
             }
         elif config.scenarioType == "prediction":
             # Make predictions based on patterns
+            predicted_outcomes = []
+            if len(relevant_facts) > 0:
+                # Look for patterns in relationships
+                relationships = {}
+                for fact in relevant_facts[:10]:
+                    pred = fact["predicate"]
+                    if pred not in relationships:
+                        relationships[pred] = []
+                    relationships[pred].append(f"{fact['subject']} → {fact['object']}")
+                
+                for pred, examples in list(relationships.items())[:3]:
+                    predicted_outcomes.append(f"Based on '{pred}' relationships: {', '.join(examples[:2])}")
+            
             analysis["analysis"] = {
-                "input": parsed_data,
-                "predicted_outcomes": [
-                    f"Based on {len(relevant_facts)} related facts, likely outcomes include..."
-                ],
-                "confidence": min(0.9, len(relevant_facts) / 10.0)
+                "scenario": config.scenarioDescription,
+                "predicted_outcomes": predicted_outcomes if predicted_outcomes else ["Insufficient data for prediction"],
+                "confidence": min(0.9, len(relevant_facts) / 10.0),
+                "basis": f"Analysis based on {len(relevant_facts)} relevant facts from knowledge graph"
             }
         elif config.scenarioType == "what_if":
             # Explore what-if scenarios
+            affected_entities = list(set([f["subject"] for f in relevant_facts[:15]] + [f["object"] for f in relevant_facts[:15]]))
+            potential_impacts = []
+            
+            if len(relevant_facts) > 0:
+                # Group by relationships
+                impact_groups = {}
+                for fact in relevant_facts[:10]:
+                    pred = fact["predicate"]
+                    if pred not in impact_groups:
+                        impact_groups[pred] = []
+                    impact_groups[pred].append(fact["object"])
+                
+                for pred, entities in list(impact_groups.items())[:3]:
+                    potential_impacts.append(f"'{pred}' may affect: {', '.join(set(entities)[:3])}")
+            
             analysis["analysis"] = {
-                "scenario": config.inputData,
-                "affected_entities": list(set([f["subject"] for f in relevant_facts[:10]])),
-                "potential_impacts": f"Analysis of {len(relevant_facts)} related facts suggests..."
+                "scenario": config.scenarioDescription,
+                "affected_entities": affected_entities[:10],
+                "potential_impacts": potential_impacts if potential_impacts else ["No clear impacts identified"],
+                "related_facts_count": len(relevant_facts)
             }
         elif config.scenarioType == "validation":
             # Validate against knowledge graph
+            validation_result = len(relevant_facts) >= 2
+            validation_details = []
+            
+            if validation_result:
+                validation_details.append(f"Scenario is validated by {len(relevant_facts)} matching facts")
+                validation_details.append(f"Key entities found: {', '.join(mentioned_entities[:5])}")
+            else:
+                validation_details.append(f"Scenario has limited support ({len(relevant_facts)} matching facts)")
+                if len(relevant_facts) == 0:
+                    validation_details.append("No matching data found in knowledge graph")
+            
             analysis["analysis"] = {
-                "validation_target": parsed_data,
+                "scenario": config.scenarioDescription,
                 "matches_found": len(relevant_facts),
-                "is_valid": len(relevant_facts) > 0,
-                "validation_details": "Data matches knowledge graph" if len(relevant_facts) > 0 else "No matching data found"
+                "is_valid": validation_result,
+                "validation_details": validation_details,
+                "confidence": min(1.0, len(relevant_facts) / 3.0)
             }
         
         return {
@@ -1402,10 +1484,9 @@ async def test_scenario_endpoint(request: ScenarioRequest):
         # Create a temporary experiment config
         temp_config = ExperimentRequest(
             name=f"Scenario Test - {request.scenarioType}",
-            description="Quick scenario test",
-            inputData=request.inputData,
+            scenarioDescription=request.inputData,  # Use inputData as scenario description
+            inputData=None,  # No additional data for quick tests
             scenarioType=request.scenarioType,
-            targetNodes=[],
             parameters={}
         )
         

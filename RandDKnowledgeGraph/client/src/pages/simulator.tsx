@@ -15,10 +15,9 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 interface ExperimentConfig {
   name: string;
-  description: string;
-  inputData: string;
+  scenarioDescription: string; // Natural language scenario description
+  inputData?: string; // Optional extra data not in knowledge base
   scenarioType: "hypothesis" | "prediction" | "what_if" | "validation";
-  targetNodes?: string[];
   parameters?: Record<string, any>;
 }
 
@@ -37,10 +36,9 @@ export default function SimulatorPage() {
   const [experiments, setExperiments] = useState<ExperimentResult[]>([]);
   const [currentExperiment, setCurrentExperiment] = useState<ExperimentConfig>({
     name: "",
-    description: "",
+    scenarioDescription: "",
     inputData: "",
     scenarioType: "hypothesis",
-    targetNodes: [],
     parameters: {},
   });
   const [isRunning, setIsRunning] = useState(false);
@@ -63,10 +61,10 @@ export default function SimulatorPage() {
   };
 
   const handleRunExperiment = async () => {
-    if (!currentExperiment.name || !currentExperiment.inputData) {
+    if (!currentExperiment.name || !currentExperiment.scenarioDescription) {
       toast({
         title: "Validation Error",
-        description: "Please provide a name and input data for the experiment",
+        description: "Please provide a name and scenario description for the experiment",
         variant: "destructive",
       });
       return;
@@ -96,10 +94,9 @@ export default function SimulatorPage() {
         // Reset form
         setCurrentExperiment({
           name: "",
-          description: "",
+          scenarioDescription: "",
           inputData: "",
           scenarioType: "hypothesis",
-          targetNodes: [],
           parameters: {},
         });
       } else {
@@ -209,19 +206,6 @@ export default function SimulatorPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="experiment-description">Description</Label>
-                <Textarea
-                  id="experiment-description"
-                  placeholder="Describe what this experiment aims to test or discover..."
-                  value={currentExperiment.description}
-                  onChange={(e) =>
-                    setCurrentExperiment({ ...currentExperiment, description: e.target.value })
-                  }
-                  rows={3}
-                />
-              </div>
-
-              <div className="space-y-2">
                 <Label htmlFor="scenario-type">Scenario Type</Label>
                 <Select
                   value={currentExperiment.scenarioType}
@@ -242,70 +226,45 @@ export default function SimulatorPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="input-data">Input Data (JSON or Text)</Label>
+                <Label htmlFor="scenario-description">
+                  Scenario Description <span className="text-red-500">*</span>
+                </Label>
                 <Textarea
-                  id="input-data"
-                  placeholder='{"entity": "Drug A", "property": "interaction", "value": "inhibits"}'
-                  value={currentExperiment.inputData}
+                  id="scenario-description"
+                  placeholder="Describe your scenario in natural language. For example: 'What happens if Drug A interacts with Drug B?' or 'Predict the effects of increasing temperature on reaction rate'..."
+                  value={currentExperiment.scenarioDescription}
                   onChange={(e) =>
-                    setCurrentExperiment({ ...currentExperiment, inputData: e.target.value })
+                    setCurrentExperiment({ ...currentExperiment, scenarioDescription: e.target.value })
                   }
                   rows={6}
-                  className="font-mono text-sm"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Enter data in JSON format or plain text describing the experiment input
+                  The simulator will analyze this scenario using facts from your knowledge graph
                 </p>
               </div>
 
               <div className="space-y-2">
-                <Label>Target Nodes (Optional)</Label>
-                <Select
-                  value=""
-                  onValueChange={(value) => {
-                    if (value && !currentExperiment.targetNodes?.includes(value)) {
-                      setCurrentExperiment({
-                        ...currentExperiment,
-                        targetNodes: [...(currentExperiment.targetNodes || []), value],
-                      });
-                    }
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select nodes from knowledge graph" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {nodes.slice(0, 50).map((node) => (
-                      <SelectItem key={node.id} value={node.label}>
-                        {node.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {currentExperiment.targetNodes && currentExperiment.targetNodes.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    {currentExperiment.targetNodes.map((node) => (
-                      <Badge
-                        key={node}
-                        variant="secondary"
-                        className="cursor-pointer"
-                        onClick={() => {
-                          setCurrentExperiment({
-                            ...currentExperiment,
-                            targetNodes: currentExperiment.targetNodes?.filter((n) => n !== node),
-                          });
-                        }}
-                      >
-                        {node} ×
-                      </Badge>
-                    ))}
-                  </div>
-                )}
+                <Label htmlFor="input-data">
+                  Additional Data (Optional)
+                </Label>
+                <Textarea
+                  id="input-data"
+                  placeholder='Add extra data not in your knowledge base (JSON or text). For example: {"temperature": 25, "pressure": 1.0}'
+                  value={currentExperiment.inputData || ""}
+                  onChange={(e) =>
+                    setCurrentExperiment({ ...currentExperiment, inputData: e.target.value })
+                  }
+                  rows={4}
+                  className="font-mono text-sm"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Optional: Provide additional data that is not already in your knowledge base. Leave empty if all data is in the knowledge graph.
+                </p>
               </div>
 
               <Button
                 onClick={handleRunExperiment}
-                disabled={isRunning || !currentExperiment.name || !currentExperiment.inputData}
+                disabled={isRunning || !currentExperiment.name || !currentExperiment.scenarioDescription}
                 className="w-full"
               >
                 {isRunning ? (
@@ -467,7 +426,7 @@ export default function SimulatorPage() {
                           <div className="flex-1">
                             <h4 className="font-semibold">{experiment.config.name}</h4>
                             <p className="text-sm text-muted-foreground line-clamp-1">
-                              {experiment.config.description}
+                              {experiment.config.scenarioDescription}
                             </p>
                             <div className="flex items-center gap-2 mt-2">
                               <Badge variant="outline">
@@ -524,11 +483,145 @@ export default function SimulatorPage() {
                     </div>
 
                     {selectedExperimentData.results && (
-                      <div>
-                        <Label>Results</Label>
-                        <pre className="mt-2 p-4 bg-muted rounded-md text-sm overflow-auto max-h-96">
-                          {JSON.stringify(selectedExperimentData.results, null, 2)}
-                        </pre>
+                      <div className="space-y-4">
+                        <div>
+                          <Label className="text-base font-semibold">Scenario Analysis</Label>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            {selectedExperimentData.results.scenario_description}
+                          </p>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <Label className="text-sm">Relevant Facts Found</Label>
+                            <p className="text-2xl font-bold">{selectedExperimentData.results.relevant_facts_count || 0}</p>
+                          </div>
+                          <div>
+                            <Label className="text-sm">Mentioned Entities</Label>
+                            <p className="text-2xl font-bold">{selectedExperimentData.results.mentioned_entities?.length || 0}</p>
+                          </div>
+                        </div>
+
+                        {selectedExperimentData.results.analysis && (
+                          <div className="space-y-3">
+                            {selectedExperimentData.results.analysis.conclusion && (
+                              <Alert>
+                                <AlertTitle>Conclusion</AlertTitle>
+                                <AlertDescription>
+                                  {selectedExperimentData.results.analysis.conclusion}
+                                </AlertDescription>
+                              </Alert>
+                            )}
+
+                            {selectedExperimentData.results.analysis.confidence !== undefined && (
+                              <div>
+                                <Label>Confidence Level</Label>
+                                <div className="mt-1 flex items-center gap-2">
+                                  <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-primary transition-all"
+                                      style={{ width: `${(selectedExperimentData.results.analysis.confidence * 100)}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-sm font-medium">
+                                    {Math.round(selectedExperimentData.results.analysis.confidence * 100)}%
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+
+                            {selectedExperimentData.results.analysis.key_evidence && (
+                              <div>
+                                <Label>Key Evidence</Label>
+                                <ul className="mt-2 space-y-1">
+                                  {selectedExperimentData.results.analysis.key_evidence.map((evidence: string, idx: number) => (
+                                    <li key={idx} className="text-sm text-muted-foreground">• {evidence}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {selectedExperimentData.results.analysis.predicted_outcomes && (
+                              <div>
+                                <Label>Predicted Outcomes</Label>
+                                <ul className="mt-2 space-y-1">
+                                  {selectedExperimentData.results.analysis.predicted_outcomes.map((outcome: string, idx: number) => (
+                                    <li key={idx} className="text-sm">• {outcome}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {selectedExperimentData.results.analysis.potential_impacts && (
+                              <div>
+                                <Label>Potential Impacts</Label>
+                                <ul className="mt-2 space-y-1">
+                                  {selectedExperimentData.results.analysis.potential_impacts.map((impact: string, idx: number) => (
+                                    <li key={idx} className="text-sm">• {impact}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {selectedExperimentData.results.analysis.validation_details && (
+                              <div>
+                                <Label>Validation Details</Label>
+                                <ul className="mt-2 space-y-1">
+                                  {selectedExperimentData.results.analysis.validation_details.map((detail: string, idx: number) => (
+                                    <li key={idx} className="text-sm">• {detail}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {selectedExperimentData.results.mentioned_entities && selectedExperimentData.results.mentioned_entities.length > 0 && (
+                              <div>
+                                <Label>Key Entities</Label>
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {selectedExperimentData.results.mentioned_entities.slice(0, 10).map((entity: string, idx: number) => (
+                                    <Badge key={idx} variant="outline">{entity}</Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {selectedExperimentData.results.relevant_facts && selectedExperimentData.results.relevant_facts.length > 0 && (
+                          <div>
+                            <Label>Relevant Facts from Knowledge Graph</Label>
+                            <div className="mt-2 space-y-2 max-h-64 overflow-y-auto">
+                              {selectedExperimentData.results.relevant_facts.slice(0, 10).map((fact: any, idx: number) => (
+                                <Card key={idx} className="p-3">
+                                  <div className="text-sm">
+                                    <span className="font-semibold">{fact.subject}</span>
+                                    <span className="mx-2 text-muted-foreground">{fact.predicate}</span>
+                                    <span className="font-semibold">{fact.object}</span>
+                                    {fact.relevance_score && (
+                                      <Badge variant="secondary" className="ml-2">
+                                        Score: {fact.relevance_score}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </Card>
+                              ))}
+                              {selectedExperimentData.results.relevant_facts.length > 10 && (
+                                <p className="text-xs text-muted-foreground text-center">
+                                  ... and {selectedExperimentData.results.relevant_facts.length - 10} more facts
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        <details className="mt-4">
+                          <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">
+                            View Raw JSON Data
+                          </summary>
+                          <pre className="mt-2 p-4 bg-muted rounded-md text-xs overflow-auto max-h-64">
+                            {JSON.stringify(selectedExperimentData.results, null, 2)}
+                          </pre>
+                        </details>
                       </div>
                     )}
 
