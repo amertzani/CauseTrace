@@ -7,6 +7,7 @@ import {
   Download,
   Settings,
   FlaskConical,
+  GitBranch,
 } from "lucide-react";
 import {
   Sidebar,
@@ -53,6 +54,11 @@ const menuItems = [
     title: "Simulator",
     url: "/simulator",
     icon: FlaskConical,
+  },
+  {
+    title: "Causal Graph",
+    url: "/causal-graph",
+    icon: GitBranch,
   },
 ];
 

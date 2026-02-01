@@ -1,29 +1,17 @@
-gradio>=4.0.0
-rdflib>=6.0.0
-huggingface_hub
-PyPDF2
-python-docx
-pandas
-openpyxl  # For Excel XLSX file support
-chardet  # For encoding detection in text files
-networkx
-matplotlib
-plotly
-numpy<2.0  # NumPy 2.x incompatible with spaCy/thinc/torch compiled with NumPy 1.x
-fastapi
-uvicorn[standard]
-pydantic
-python-multipart
-transformers>=4.30.0
-torch>=2.0.0
-accelerate>=0.20.0
-bitsandbytes>=0.41.0
-# NLP libraries (optional but recommended - install separately)
-# NOTE: Python 3.14 is very new - spaCy may require Visual Studio Build Tools
-# Install with: .\install_spacy_windows.bat OR follow instructions in SPACY_INSTALL.md
-spacy>=3.7.0
-clean-text>=0.6.0
-neuralcoref>=4.0.0
-OpenNRE>=2.0.0
-REL>=2.0.0
-blink-lite>=0.1.0
+# Full dependency list (reference only).
+# One-shot "pip install -r requirements.txt" can hit ResolutionTooDeep.
+# Use two-stage install:
+#
+#   pip install -r requirements-core.txt
+#   BLIS_ARCH=generic pip install -r requirements-ml.txt
+#
+# Or run: ./install_requirements.sh
+
+# --- requirements-core.txt ---
+# rdflib>=6.0.0, huggingface_hub, PyPDF2, python-docx, pandas, openpyxl,
+# chardet, networkx, matplotlib, plotly, numpy>=1.24,<2.0, fastapi,
+# uvicorn[standard], pydantic, python-multipart, clean-text>=0.6.0
+
+# --- requirements-ml.txt (install with BLIS_ARCH=generic) ---
+# gradio==4.44.0, spacy==3.7.6, transformers, torch, accelerate, bitsandbytes,
+# causal-learn==0.1.4.4, dowhy==0.14

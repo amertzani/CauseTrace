@@ -28,7 +28,9 @@ import json
 from datetime import datetime
 from typing import List, Dict, Optional
 
-DOCUMENTS_FILE = "documents_store.json"
+# Use same directory as this module so path doesn't depend on CWD at runtime
+_BASE_DIR = os.path.dirname(os.path.abspath(os.path.realpath(__file__)))
+DOCUMENTS_FILE = os.path.join(_BASE_DIR, "documents_store.json")
 
 def load_documents() -> List[Dict]:
     """Load documents from storage"""

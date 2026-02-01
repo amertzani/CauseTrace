@@ -10,6 +10,18 @@ import type { Document } from "@shared/schema";
 // Store File objects alongside document metadata
 interface DocumentWithFile extends Document {
   file?: File; // Store the actual File object
+  processingDetails?: {
+    agent?: string;
+    factsAdded?: number;
+    rowsProcessed?: number;
+    columns?: number;
+    csvStats?: {
+      columnFacts?: number;
+      rowFacts?: number;
+      relationshipFacts?: number;
+      entityColumns?: string[];
+    };
+  };
 }
 
 export default function UploadPage() {
@@ -77,10 +89,56 @@ export default function UploadPage() {
       const result = await hfApi.uploadDocuments(fileObjects);
       
       if (result.success) {
+        // Parse result to extract CSV-specific information
+        const responseData = result.data;
+        const fileResults = responseData?.file_results || [];
+        
+        console.log('📊 Upload response:', responseData);
+        console.log('📊 File results:', fileResults);
+        
         setDocuments((prev) =>
-          prev.map((doc) =>
-            doc.status === "processing" ? { ...doc, status: "completed" as const } : doc
-          )
+          prev.map((doc) => {
+            if (doc.status === "processing") {
+              // Find matching result for this document
+              const fileResult = fileResults.find((fr: any) => 
+                fr.filename === doc.name || fr.name === doc.name
+              );
+              
+              console.log(`📊 Processing doc ${doc.name}, found result:`, fileResult);
+              
+              const isCSV = doc.type === 'csv';
+              const processingDetails: any = {};
+              
+              if (fileResult) {
+                processingDetails.agent = fileResult.agent || fileResult.agent_name;
+                processingDetails.factsAdded = fileResult.facts_added ?? responseData?.facts_extracted;
+                
+                if (isCSV && fileResult.csv_stats) {
+                  processingDetails.csvStats = {
+                    columnFacts: fileResult.csv_stats.column_facts,
+                    rowFacts: fileResult.csv_stats.row_facts,
+                    relationshipFacts: fileResult.csv_stats.relationship_facts,
+                    entityColumns: fileResult.csv_stats.entity_columns || []
+                  };
+                  processingDetails.rowsProcessed = fileResult.rows_processed;
+                  processingDetails.columns = fileResult.total_columns;
+                } else if (fileResult.metadata) {
+                  processingDetails.rowsProcessed = fileResult.metadata.rows;
+                  processingDetails.columns = fileResult.metadata.columns;
+                }
+              } else if (responseData?.facts_extracted != null) {
+                // No per-file result; use response-level counts
+                processingDetails.factsAdded = responseData.facts_extracted;
+              }
+              
+              return { 
+                ...doc, 
+                status: "completed" as const,
+                processingDetails: Object.keys(processingDetails).length > 0 ? processingDetails : undefined
+              };
+            }
+            return doc;
+          })
         );
         
         // Refresh facts to show newly extracted facts
@@ -92,10 +150,30 @@ export default function UploadPage() {
           console.warn('⚠️ Upload: refreshFacts not available');
         }
         
-        toast({
-          title: "Processing complete",
-          description: result.data?.message || "Knowledge extraction finished successfully",
-        });
+        // Show detailed toast for CSV files
+        const csvFiles = pendingDocs.filter(doc => doc.type === 'csv');
+        if (csvFiles.length > 0) {
+          const csvFile = csvFiles[0];
+          const doc = documents.find(d => d.id === csvFile.id);
+          const details = doc?.processingDetails;
+          
+          if (details?.csvStats) {
+            toast({
+              title: "CSV Processing Complete",
+              description: `Processed ${details.rowsProcessed} rows, ${details.columns} columns. Added ${details.factsAdded} facts to knowledge graph.`,
+            });
+          } else {
+            toast({
+              title: "Processing complete",
+              description: result.data?.message || "Knowledge extraction finished successfully",
+            });
+          }
+        } else {
+          toast({
+            title: "Processing complete",
+            description: result.data?.message || "Knowledge extraction finished successfully",
+          });
+        }
       } else {
         // Mark as failed
         setDocuments((prev) =>

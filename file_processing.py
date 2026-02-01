@@ -168,6 +168,9 @@ def process_uploaded_file(file, original_filename=None):
     metadata = result['metadata']
     agent_name = result.get('agent', 'Unknown Agent')
     
+    # Get the agent instance for enhanced processing
+    agent = coordinator.get_agent_for_file(file_path)
+    
     # Update global state
     update_extracted_text(extracted_text)
     
@@ -183,10 +186,10 @@ def process_uploaded_file(file, original_filename=None):
         print(f"   Agent: {agent_name}")
         return f"⚠️  Warning: Could not extract meaningful text from {display_name}. File may be empty or in an unsupported format."
     
-    # Add to knowledge graph
+    # Add to knowledge graph (CSV uses same path as other files: extract text -> add_to_graph)
     filename = original_filename if original_filename else os.path.basename(file_path)
     timestamp = datetime.now().isoformat()
-    # Pass agent information to knowledge graph
+    csv_result_data = None
     kg_result = add_to_graph(extracted_text, source_document=filename, uploaded_at=timestamp, agent_name=agent_name)
     
     # Build result message with agent information
@@ -209,7 +212,27 @@ def process_uploaded_file(file, original_filename=None):
     
     result_msg += f"\n Text preview:\n{preview}\n\n{kg_result}"
     
-    return result_msg
+    # Return structured result for API response
+    result_data = {
+        'message': result_msg,
+        'agent_name': agent_name,
+        'metadata': metadata,
+    }
+    
+    # Add CSV-specific stats if available
+    if agent_name == "CSV Agent" and 'csv_result_data' in locals() and csv_result_data:
+        result_data['csv_stats'] = {
+            'column_facts': csv_result_data.get('column_facts', 0),
+            'row_facts': csv_result_data.get('row_facts', 0),
+            'relationship_facts': csv_result_data.get('relationship_facts', 0),
+            'facts_added': csv_result_data.get('facts_added', 0),
+            'entity_columns': csv_result_data.get('entity_columns', [])
+        }
+        result_data['rows_processed'] = csv_result_data.get('rows_processed', csv_result_data.get('total_rows', 0))
+        result_data['total_columns'] = csv_result_data.get('total_columns', 0)
+        result_data['facts_added'] = csv_result_data.get('facts_added', 0)
+    
+    return result_data
 
 def handle_file_upload(files, original_filenames=None):
     """
@@ -259,15 +282,40 @@ def handle_file_upload(files, original_filenames=None):
             result = process_uploaded_file(file, original_filename=file_name)
             
             # Check if processing was successful
-            if result.startswith(" Successfully"):
+            # result can be a string or dict (if enhanced processing returns structured data)
+            if isinstance(result, dict):
+                result_message = result.get('message', '')
+                if result_message.startswith(" Successfully"):
+                    results.append(f"SUCCESS: {file_name} - {result_message}")
+                    file_result = {
+                        'name': file_name,
+                        'filename': file_name,
+                        'size': os.path.getsize(file_path) if os.path.exists(file_path) else 0,
+                        'processed_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'agent': result.get('agent_name'),
+                        'agent_name': result.get('agent_name'),
+                        'metadata': result.get('metadata', {}),
+                    }
+                    # Add CSV-specific stats if available
+                    if result.get('csv_stats'):
+                        file_result['csv_stats'] = result['csv_stats']
+                        file_result['rows_processed'] = result.get('rows_processed')
+                        file_result['total_columns'] = result.get('total_columns')
+                        file_result['facts_added'] = result.get('facts_added')
+                    new_processed.append(file_result)
+                else:
+                    results.append(f"ERROR: {file_name} - {result_message}")
+            elif isinstance(result, str) and result.startswith(" Successfully"):
                 results.append(f"SUCCESS: {file_name} - {result}")
                 new_processed.append({
                     'name': file_name,
+                    'filename': file_name,
                     'size': os.path.getsize(file_path) if os.path.exists(file_path) else 0,
                     'processed_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 })
             else:
-                results.append(f"ERROR: {file_name} - {result}")
+                error_msg = result.get('message', str(result)) if isinstance(result, dict) else result
+                results.append(f"ERROR: {file_name} - {error_msg}")
                 
         except Exception as e:
             file_name = original_filenames.get(file_path, os.path.basename(file)) if isinstance(file, str) else original_filenames.get(file_path, os.path.basename(file.name)) if hasattr(file, 'name') else str(file)
@@ -296,7 +344,15 @@ def handle_file_upload(files, original_filenames=None):
     for result in results:
         summary += f"{result}\n"
     
-    return summary
+    # Return both summary string and structured data for API
+    return {
+        'summary': summary,
+        'file_results': new_processed,
+        'total_files': total_files,
+        'successful': successful,
+        'skipped': skipped,
+        'failed': failed
+    }
 
 def show_processed_files():
     """Show list of processed files."""

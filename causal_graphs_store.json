@@ -1,0 +1,1108 @@
+{
+  "graphs": {
+    "Data Compressive Strength.csv": {
+      "nodes": [
+        {
+          "id": "node_No",
+          "label": "No.",
+          "type": "variable",
+          "connections": 8
+        },
+        {
+          "id": "node_Fine_Aggregate",
+          "label": "Fine Aggregate",
+          "type": "variable",
+          "connections": 10
+        },
+        {
+          "id": "node_Coarse_Aggregate",
+          "label": "Coarse Aggregate",
+          "type": "variable",
+          "connections": 8
+        },
+        {
+          "id": "node_Fly_ash",
+          "label": "Fly ash",
+          "type": "variable",
+          "connections": 6
+        },
+        {
+          "id": "node_Silica_Fume",
+          "label": "Silica Fume",
+          "type": "variable",
+          "connections": 6
+        },
+        {
+          "id": "node_Cement",
+          "label": "Cement",
+          "type": "variable",
+          "connections": 8
+        },
+        {
+          "id": "node_Slag",
+          "label": "Slag",
+          "type": "variable",
+          "connections": 20
+        },
+        {
+          "id": "node_Water",
+          "label": "Water",
+          "type": "variable",
+          "connections": 6
+        },
+        {
+          "id": "node_Superplasticizer",
+          "label": "Superplasticizer",
+          "type": "variable",
+          "connections": 8
+        },
+        {
+          "id": "node_Age",
+          "label": "Age",
+          "type": "variable",
+          "connections": 2
+        },
+        {
+          "id": "node_Compressive__Strength",
+          "label": "Compressive  Strength",
+          "type": "variable",
+          "connections": 2
+        }
+      ],
+      "edges": [
+        {
+          "id": "edge_0",
+          "source": "node_Coarse_Aggregate",
+          "target": "node_No",
+          "label": "causes",
+          "details": "Data-driven: Coarse Aggregate → No.",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_1",
+          "source": "node_Silica_Fume",
+          "target": "node_No",
+          "label": "causes",
+          "details": "Data-driven: Silica Fume → No.",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_2",
+          "source": "node_Cement",
+          "target": "node_No",
+          "label": "causes",
+          "details": "Data-driven: Cement → No.",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_3",
+          "source": "node_No",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: No. → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_4",
+          "source": "node_Coarse_Aggregate",
+          "target": "node_Fine_Aggregate",
+          "label": "causes",
+          "details": "Data-driven: Coarse Aggregate → Fine Aggregate",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_5",
+          "source": "node_Fly_ash",
+          "target": "node_Fine_Aggregate",
+          "label": "causes",
+          "details": "Data-driven: Fly ash → Fine Aggregate",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_6",
+          "source": "node_Silica_Fume",
+          "target": "node_Fine_Aggregate",
+          "label": "causes",
+          "details": "Data-driven: Silica Fume → Fine Aggregate",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_7",
+          "source": "node_Cement",
+          "target": "node_Fine_Aggregate",
+          "label": "causes",
+          "details": "Data-driven: Cement → Fine Aggregate",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_8",
+          "source": "node_Fine_Aggregate",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: Fine Aggregate → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_9",
+          "source": "node_Coarse_Aggregate",
+          "target": "node_No",
+          "label": "causes",
+          "details": "Data-driven: Coarse Aggregate → No.",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_10",
+          "source": "node_Coarse_Aggregate",
+          "target": "node_Fine_Aggregate",
+          "label": "causes",
+          "details": "Data-driven: Coarse Aggregate → Fine Aggregate",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_11",
+          "source": "node_Coarse_Aggregate",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: Coarse Aggregate → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_12",
+          "source": "node_Coarse_Aggregate",
+          "target": "node_Superplasticizer",
+          "label": "causes",
+          "details": "Data-driven: Coarse Aggregate → Superplasticizer",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_13",
+          "source": "node_Fly_ash",
+          "target": "node_Fine_Aggregate",
+          "label": "causes",
+          "details": "Data-driven: Fly ash → Fine Aggregate",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_14",
+          "source": "node_Fly_ash",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: Fly ash → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_15",
+          "source": "node_Fly_ash",
+          "target": "node_Water",
+          "label": "causes",
+          "details": "Data-driven: Fly ash → Water",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_16",
+          "source": "node_Silica_Fume",
+          "target": "node_No",
+          "label": "causes",
+          "details": "Data-driven: Silica Fume → No.",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_17",
+          "source": "node_Silica_Fume",
+          "target": "node_Fine_Aggregate",
+          "label": "causes",
+          "details": "Data-driven: Silica Fume → Fine Aggregate",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_18",
+          "source": "node_Silica_Fume",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: Silica Fume → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_19",
+          "source": "node_Cement",
+          "target": "node_No",
+          "label": "causes",
+          "details": "Data-driven: Cement → No.",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_20",
+          "source": "node_Cement",
+          "target": "node_Fine_Aggregate",
+          "label": "causes",
+          "details": "Data-driven: Cement → Fine Aggregate",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_21",
+          "source": "node_Cement",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: Cement → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_22",
+          "source": "node_Cement",
+          "target": "node_Superplasticizer",
+          "label": "causes",
+          "details": "Data-driven: Cement → Superplasticizer",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_23",
+          "source": "node_No",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: No. → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_24",
+          "source": "node_Fine_Aggregate",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: Fine Aggregate → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_25",
+          "source": "node_Coarse_Aggregate",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: Coarse Aggregate → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_26",
+          "source": "node_Fly_ash",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: Fly ash → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_27",
+          "source": "node_Silica_Fume",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: Silica Fume → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_28",
+          "source": "node_Cement",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: Cement → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_29",
+          "source": "node_Water",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: Water → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_30",
+          "source": "node_Superplasticizer",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: Superplasticizer → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_31",
+          "source": "node_Age",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: Age → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_32",
+          "source": "node_Compressive__Strength",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: Compressive  Strength → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_33",
+          "source": "node_Fly_ash",
+          "target": "node_Water",
+          "label": "causes",
+          "details": "Data-driven: Fly ash → Water",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_34",
+          "source": "node_Water",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: Water → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_35",
+          "source": "node_Superplasticizer",
+          "target": "node_Water",
+          "label": "causes",
+          "details": "Data-driven: Superplasticizer → Water",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_36",
+          "source": "node_Coarse_Aggregate",
+          "target": "node_Superplasticizer",
+          "label": "causes",
+          "details": "Data-driven: Coarse Aggregate → Superplasticizer",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_37",
+          "source": "node_Cement",
+          "target": "node_Superplasticizer",
+          "label": "causes",
+          "details": "Data-driven: Cement → Superplasticizer",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_38",
+          "source": "node_Superplasticizer",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: Superplasticizer → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_39",
+          "source": "node_Superplasticizer",
+          "target": "node_Water",
+          "label": "causes",
+          "details": "Data-driven: Superplasticizer → Water",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_40",
+          "source": "node_Age",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: Age → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        },
+        {
+          "id": "edge_41",
+          "source": "node_Compressive__Strength",
+          "target": "node_Slag",
+          "label": "causes",
+          "details": "Data-driven: Compressive  Strength → Slag",
+          "confidence": 0.8,
+          "is_inferred": false,
+          "source_document": "data"
+        }
+      ],
+      "stats": {
+        "total_nodes": 11,
+        "total_edges": 42,
+        "direct_relationships": 42,
+        "inferred_relationships": 0,
+        "most_causal_entities": [
+          {
+            "entity": "Slag",
+            "connections": 20
+          },
+          {
+            "entity": "Fine Aggregate",
+            "connections": 10
+          },
+          {
+            "entity": "No.",
+            "connections": 8
+          },
+          {
+            "entity": "Coarse Aggregate",
+            "connections": 8
+          },
+          {
+            "entity": "Cement",
+            "connections": 8
+          },
+          {
+            "entity": "Superplasticizer",
+            "connections": 8
+          },
+          {
+            "entity": "Fly ash",
+            "connections": 6
+          },
+          {
+            "entity": "Silica Fume",
+            "connections": 6
+          },
+          {
+            "entity": "Water",
+            "connections": 6
+          },
+          {
+            "entity": "Age",
+            "connections": 2
+          }
+        ],
+        "algorithm": "PC",
+        "source": "data"
+      },
+      "data_columns": [
+        "No.",
+        "Fine Aggregate",
+        "Coarse Aggregate",
+        "Fly ash",
+        "Silica Fume",
+        "Cement",
+        "Slag",
+        "Water",
+        "Superplasticizer",
+        "Age",
+        "Compressive  Strength"
+      ],
+      "data_rows": [
+        [
+          195.0,
+          810.0,
+          975.0,
+          112.0,
+          0.0,
+          261.0,
+          0.0,
+          180.0,
+          0.0,
+          28.0,
+          41.0
+        ],
+        [
+          199.0,
+          780.0,
+          940.0,
+          123.0,
+          0.0,
+          288.0,
+          0.0,
+          169.0,
+          0.0,
+          28.0,
+          46.0
+        ],
+        [
+          200.0,
+          785.0,
+          945.0,
+          123.0,
+          0.0,
+          288.0,
+          0.0,
+          172.0,
+          0.0,
+          28.0,
+          44.0
+        ],
+        [
+          201.0,
+          790.0,
+          950.0,
+          123.0,
+          0.0,
+          288.0,
+          0.0,
+          172.0,
+          0.0,
+          28.0,
+          52.0
+        ],
+        [
+          212.0,
+          655.0,
+          1165.0,
+          0.0,
+          0.0,
+          372.0,
+          0.0,
+          186.0,
+          0.0,
+          3.0,
+          26.0
+        ],
+        [
+          238.0,
+          777.0,
+          988.0,
+          0.0,
+          0.0,
+          280.0,
+          0.0,
+          202.0,
+          0.0,
+          28.0,
+          25.0
+        ],
+        [
+          240.0,
+          777.0,
+          988.0,
+          0.0,
+          0.0,
+          280.0,
+          0.0,
+          202.0,
+          0.0,
+          91.0,
+          29.0
+        ],
+        [
+          306.0,
+          756.0,
+          1089.0,
+          204.0,
+          0.0,
+          136.0,
+          0.0,
+          124.0,
+          5.0,
+          91.0,
+          39.0
+        ],
+        [
+          475.0,
+          944.0,
+          871.0,
+          0.0,
+          0.0,
+          400.0,
+          0.0,
+          180.0,
+          0.0,
+          28.0,
+          31.0
+        ],
+        [
+          476.0,
+          944.0,
+          871.0,
+          0.0,
+          0.0,
+          400.0,
+          0.0,
+          180.0,
+          0.0,
+          90.0,
+          34.0
+        ],
+        [
+          477.0,
+          941.0,
+          868.0,
+          40.0,
+          0.0,
+          360.0,
+          0.0,
+          180.0,
+          0.0,
+          7.0,
+          20.0
+        ],
+        [
+          478.0,
+          941.0,
+          868.0,
+          40.0,
+          0.0,
+          360.0,
+          0.0,
+          180.0,
+          0.0,
+          28.0,
+          28.0
+        ],
+        [
+          481.0,
+          937.0,
+          865.0,
+          80.0,
+          0.0,
+          320.0,
+          0.0,
+          180.0,
+          0.0,
+          28.0,
+          26.0
+        ],
+        [
+          482.0,
+          937.0,
+          865.0,
+          80.0,
+          0.0,
+          320.0,
+          0.0,
+          180.0,
+          0.0,
+          90.0,
+          37.0
+        ],
+        [
+          483.0,
+          933.0,
+          852.0,
+          120.0,
+          0.0,
+          280.0,
+          0.0,
+          180.0,
+          0.0,
+          7.0,
+          14.0
+        ],
+        [
+          484.0,
+          933.0,
+          852.0,
+          120.0,
+          0.0,
+          280.0,
+          0.0,
+          180.0,
+          0.0,
+          28.0,
+          21.0
+        ],
+        [
+          485.0,
+          933.0,
+          852.0,
+          120.0,
+          0.0,
+          280.0,
+          0.0,
+          180.0,
+          0.0,
+          90.0,
+          32.0
+        ],
+        [
+          486.0,
+          941.0,
+          869.0,
+          0.0,
+          20.0,
+          380.0,
+          0.0,
+          180.0,
+          0.0,
+          7.0,
+          21.0
+        ],
+        [
+          487.0,
+          941.0,
+          869.0,
+          0.0,
+          20.0,
+          380.0,
+          0.0,
+          180.0,
+          0.0,
+          28.0,
+          30.0
+        ],
+        [
+          488.0,
+          941.0,
+          869.0,
+          0.0,
+          20.0,
+          380.0,
+          0.0,
+          180.0,
+          0.0,
+          90.0,
+          35.0
+        ],
+        [
+          490.0,
+          937.0,
+          865.0,
+          0.0,
+          40.0,
+          360.0,
+          0.0,
+          180.0,
+          0.0,
+          28.0,
+          40.0
+        ],
+        [
+          491.0,
+          937.0,
+          865.0,
+          0.0,
+          40.0,
+          360.0,
+          0.0,
+          180.0,
+          0.0,
+          90.0,
+          43.0
+        ],
+        [
+          492.0,
+          935.0,
+          863.0,
+          40.0,
+          20.0,
+          340.0,
+          0.0,
+          180.0,
+          0.0,
+          7.0,
+          22.0
+        ],
+        [
+          493.0,
+          935.0,
+          863.0,
+          40.0,
+          20.0,
+          340.0,
+          0.0,
+          180.0,
+          0.0,
+          28.0,
+          28.0
+        ],
+        [
+          494.0,
+          935.0,
+          863.0,
+          40.0,
+          20.0,
+          340.0,
+          0.0,
+          180.0,
+          0.0,
+          90.0,
+          38.0
+        ],
+        [
+          495.0,
+          932.0,
+          861.0,
+          80.0,
+          20.0,
+          280.0,
+          0.0,
+          180.0,
+          0.0,
+          7.0,
+          20.0
+        ],
+        [
+          499.0,
+          930.0,
+          858.0,
+          120.0,
+          20.0,
+          260.0,
+          0.0,
+          180.0,
+          0.0,
+          28.0,
+          26.0
+        ],
+        [
+          500.0,
+          930.0,
+          858.0,
+          120.0,
+          20.0,
+          260.0,
+          0.0,
+          180.0,
+          0.0,
+          90.0,
+          37.0
+        ],
+        [
+          574.0,
+          532.0,
+          915.0,
+          141.0,
+          0.0,
+          563.0,
+          0.0,
+          176.0,
+          0.0,
+          7.0,
+          46.0
+        ],
+        [
+          575.0,
+          532.0,
+          915.0,
+          141.0,
+          0.0,
+          563.0,
+          0.0,
+          176.0,
+          0.0,
+          28.0,
+          60.0
+        ],
+        [
+          577.0,
+          532.0,
+          915.0,
+          141.0,
+          0.0,
+          563.0,
+          0.0,
+          176.0,
+          0.0,
+          91.0,
+          70.0
+        ],
+        [
+          579.0,
+          530.0,
+          911.0,
+          141.0,
+          35.0,
+          528.0,
+          0.0,
+          176.0,
+          0.0,
+          7.0,
+          47.0
+        ],
+        [
+          580.0,
+          530.0,
+          911.0,
+          141.0,
+          35.0,
+          528.0,
+          0.0,
+          176.0,
+          0.0,
+          28.0,
+          63.0
+        ],
+        [
+          582.0,
+          530.0,
+          911.0,
+          141.0,
+          35.0,
+          528.0,
+          0.0,
+          176.0,
+          0.0,
+          91.0,
+          75.0
+        ],
+        [
+          583.0,
+          528.0,
+          908.0,
+          141.0,
+          70.0,
+          493.0,
+          0.0,
+          176.0,
+          0.0,
+          3.0,
+          38.0
+        ],
+        [
+          584.0,
+          528.0,
+          908.0,
+          141.0,
+          70.0,
+          493.0,
+          0.0,
+          176.0,
+          0.0,
+          7.0,
+          52.0
+        ],
+        [
+          590.0,
+          523.0,
+          904.0,
+          141.0,
+          106.0,
+          458.0,
+          0.0,
+          176.0,
+          0.0,
+          28.0,
+          72.0
+        ],
+        [
+          592.0,
+          523.0,
+          904.0,
+          141.0,
+          106.0,
+          458.0,
+          0.0,
+          176.0,
+          0.0,
+          91.0,
+          12.0
+        ],
+        [
+          593.0,
+          524.0,
+          900.0,
+          141.0,
+          141.0,
+          422.0,
+          0.0,
+          176.0,
+          0.0,
+          3.0,
+          36.0
+        ],
+        [
+          594.0,
+          524.0,
+          900.0,
+          141.0,
+          141.0,
+          422.0,
+          0.0,
+          176.0,
+          0.0,
+          7.0,
+          54.0
+        ],
+        [
+          596.0,
+          524.0,
+          900.0,
+          141.0,
+          141.0,
+          422.0,
+          0.0,
+          176.0,
+          0.0,
+          56.0,
+          72.0
+        ],
+        [
+          597.0,
+          524.0,
+          900.0,
+          141.0,
+          141.0,
+          422.0,
+          0.0,
+          176.0,
+          0.0,
+          91.0,
+          73.0
+        ]
+      ]
+    }
+  },
+  "last_updated": "2026-02-01T12:48:40.161255"
+}

@@ -1,42 +1,24 @@
 {
-  "last_updated": "2026-01-26T19:47:40.827905",
-  "total_documents": 4,
+  "last_updated": "2026-02-01T13:10:05.025480",
+  "total_documents": 2,
   "documents": [
     {
       "id": "1",
-      "name": "test.txt",
-      "type": "txt",
-      "size": 49,
-      "uploaded_at": "2026-01-05T23:52:39.710508",
+      "name": "Data Compressive Strength.csv",
+      "type": "csv",
+      "size": 28416,
+      "uploaded_at": "2026-02-01T12:48:40.187921",
       "status": "completed",
-      "facts_extracted": 2
+      "facts_extracted": 35
     },
     {
       "id": "2",
-      "name": "carbonfacts.docx",
-      "type": "docx",
-      "size": 13360,
-      "uploaded_at": "2026-01-05T23:56:17.193633",
-      "status": "completed",
-      "facts_extracted": 3
-    },
-    {
-      "id": "3",
-      "name": "facts.csv",
+      "name": "Data Electrical Resistivity.csv",
       "type": "csv",
-      "size": 49,
-      "uploaded_at": "2026-01-06T00:02:54.587610",
+      "size": 14473,
+      "uploaded_at": "2026-02-01T13:10:05.025460",
       "status": "completed",
-      "facts_extracted": 11
-    },
-    {
-      "id": "4",
-      "name": "test5.txt",
-      "type": "txt",
-      "size": 1117,
-      "uploaded_at": "2026-01-26T19:47:40.827892",
-      "status": "completed",
-      "facts_extracted": 40
+      "facts_extracted": 35
     }
   ]
 }

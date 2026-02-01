@@ -118,10 +118,12 @@ Install with:
 pip install openpyxl chardet
 ```
 
-Or install all requirements:
+Or install all requirements (two-stage to avoid pip ResolutionTooDeep):
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-core.txt
+BLIS_ARCH=generic pip install -r requirements-ml.txt
 ```
+Or run: `./install_requirements.sh`
 
 ## Adding New File Types
 

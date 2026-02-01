@@ -59,10 +59,11 @@ SPACY_NLP = None
 # CONFIGURATION
 # ============================================================================
 
-# Storage file paths
-KNOWLEDGE_FILE = "knowledge_graph.pkl"  # Main persistent storage (RDF graph)
-BACKUP_FILE = "knowledge_backup.json"   # JSON backup for recovery
-NORMALIZATION_FILE = "entity_normalization.json"  # Entity normalization mappings
+# Storage file paths (use module directory so paths don't depend on CWD at runtime)
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+KNOWLEDGE_FILE = os.path.join(_BASE_DIR, "knowledge_graph.pkl")  # Main persistent storage (RDF graph)
+BACKUP_FILE = os.path.join(_BASE_DIR, "knowledge_backup.json")   # JSON backup for recovery
+NORMALIZATION_FILE = os.path.join(_BASE_DIR, "entity_normalization.json")  # Entity normalization mappings
 
 # Triplex model configuration
 USE_TRIPLEX = os.getenv("USE_TRIPLEX", "false").lower() == "true"  # Enable via environment variable
@@ -1328,8 +1329,10 @@ def add_to_graph(text, source_document: str = "manual", uploaded_at: str = None,
     if uploaded_at is None:
         uploaded_at = datetime.now().isoformat()
     
-    # Try new pipeline first
+    # Try new pipeline first (skip for CSV - use fast legacy extraction only)
     try:
+        if agent_name == "CSV Agent":
+            raise RuntimeError("CSV: use legacy extraction")
         from kg_pipeline import extract_knowledge_pipeline
         print(f"🔄 Attempting pipeline extraction from text (length: {len(text)} chars)...")
         pipeline_triples = extract_knowledge_pipeline(text, source_document, uploaded_at)
@@ -1542,6 +1545,11 @@ def add_to_graph(text, source_document: str = "manual", uploaded_at: str = None,
             return f"pipeline\n Added {added_count} new triples. Total facts stored: {len(graph)}.\n Saved"
     except ImportError:
         print("⚠️  Pipeline module not found, using legacy extraction")
+    except RuntimeError as e:
+        if "CSV" in str(e):
+            print("📄 CSV upload: using fast legacy extraction (skipping pipeline)")
+        else:
+            raise
     except Exception as e:
         print(f"⚠️  Pipeline extraction failed: {e}, falling back to legacy methods")
         import traceback

@@ -98,6 +98,41 @@ export default function ImportExportPage() {
     }
   };
 
+  const handleExportCausalGraph = async () => {
+    try {
+      toast({
+        title: "Exporting causal graph...",
+        description: "Preparing KB + all datasets.",
+      });
+      const result = await hfApi.exportCausalGraph("all", undefined, true);
+      if (result.success && result.data) {
+        const blob = new Blob([JSON.stringify(result.data, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `causal-graph-${Date.now()}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        const meta = result.data.metadata || {};
+        const count = meta.sources?.length ?? 0;
+        toast({
+          title: "Causal graph exported",
+          description: `Exported ${count} source(s): KB + datasets.`,
+        });
+      } else {
+        throw new Error(result.error || "Failed to export causal graph");
+      }
+    } catch (error) {
+      toast({
+        title: "Export failed",
+        description: error instanceof Error ? error.message : "Failed to export causal graph",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleImport = async (file: File) => {
     try {
       toast({
@@ -167,6 +202,7 @@ export default function ImportExportPage() {
 
       <ImportExportPanel
         onExport={handleExport}
+        onExportCausalGraph={handleExportCausalGraph}
         onImport={handleImport}
         metadata={metadata}
       />

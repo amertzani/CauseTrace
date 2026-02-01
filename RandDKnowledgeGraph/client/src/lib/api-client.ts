@@ -181,7 +181,16 @@ class HuggingFaceApiClient {
       if (!response.ok) {
         const errorText = await response.text();
         console.error(`❌ API Error: ${response.status} - ${errorText}`);
-        throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+        // FastAPI returns { detail: "message" } on error; surface that to the user
+        let detail = errorText;
+        try {
+          const errJson = JSON.parse(errorText);
+          if (typeof errJson.detail === "string") detail = errJson.detail;
+          else if (Array.isArray(errJson.detail)) detail = errJson.detail.map((d: any) => d?.msg || d).join("; ");
+        } catch {
+          // use errorText as-is
+        }
+        throw new Error(detail || `HTTP ${response.status}`);
       }
 
       const data = await response.json();
@@ -211,20 +220,23 @@ class HuggingFaceApiClient {
     }
   }
 
-  // Document Upload - Updated for FastAPI
+  // Document Upload - FastAPI expects multipart form with field name "files"
   async uploadDocuments(files: File[]): Promise<ApiResponse<any>> {
+    if (!files?.length) {
+      return { success: false, error: "No files to upload." };
+    }
     const formData = new FormData();
     files.forEach((file) => formData.append("files", file));
 
-    // Calculate timeout based on file size (5 minutes base + 1 minute per MB)
+    // Timeout: 2 min base, +30s per MB (cap 10 min) so uploads complete without hanging
     const totalSizeMB = files.reduce((sum, file) => sum + file.size, 0) / (1024 * 1024);
-    const timeoutMs = Math.max(300000, 300000 + totalSizeMB * 60000); // Min 5 min, +1 min per MB
-    console.log(`📤 Uploading ${files.length} file(s), total ${totalSizeMB.toFixed(2)}MB, timeout: ${(timeoutMs/1000).toFixed(0)}s`);
+    const timeoutMs = Math.min(600000, Math.max(120000, 120000 + totalSizeMB * 30000));
+    console.log(`📤 Uploading ${files.length} file(s), total ${totalSizeMB.toFixed(2)}MB, timeout: ${(timeoutMs / 1000).toFixed(0)}s`);
 
     return this.request("/api/knowledge/upload", {
       method: "POST",
       body: formData,
-      headers: {}, // Let browser set Content-Type for FormData
+      headers: {}, // Do not set Content-Type; browser sets multipart/form-data with boundary
     }, timeoutMs);
   }
 
@@ -414,6 +426,80 @@ class HuggingFaceApiClient {
     }
     
     return this.callGradioApi("api_delete_fact", [factId]);
+  }
+
+  // Causal Graph - List available sources (KB + data-driven datasets)
+  async getCausalGraphSources(): Promise<ApiResponse<{ sources: { id: string; label: string; type: string }[] }>> {
+    if (USE_LOCAL_BACKEND) {
+      const response = await this.request("/api/knowledge/causal-graph/sources", { method: "GET" });
+      return response;
+    }
+    return { success: false, error: "Causal graph requires local backend" };
+  }
+
+  // Causal Graph - Get causal relationships (from KB or dataset)
+  async getCausalGraph(
+    includeInferred: boolean = true,
+    source: "kb" | "dataset" = "kb",
+    documentName?: string
+  ): Promise<ApiResponse<any>> {
+    if (USE_LOCAL_BACKEND) {
+      const params = new URLSearchParams({
+        include_inferred: includeInferred.toString(),
+        source,
+      });
+      if (source === "dataset" && documentName) {
+        params.set("document_name", documentName);
+      }
+      const response = await this.request(`/api/knowledge/causal-graph?${params.toString()}`, {
+        method: "GET",
+      });
+      return response;
+    }
+    return {
+      success: false,
+      error: "Causal graph requires local backend",
+    };
+  }
+
+  // DoWhy: causal effect estimation on a data-driven causal graph
+  async runDoWhyEffect(
+    documentName: string,
+    treatment: string,
+    outcome: string,
+    method?: string
+  ): Promise<ApiResponse<{ estimate_value: number | null; estimate: string; refutation: string }>> {
+    if (USE_LOCAL_BACKEND) {
+      const response = await this.request("/api/knowledge/causal-graph/dowhy", {
+        method: "POST",
+        body: JSON.stringify({
+          document_name: documentName,
+          treatment,
+          outcome,
+          method: method || "backdoor.linear_regression",
+        }),
+      });
+      return response;
+    }
+    return { success: false, error: "DoWhy requires local backend" };
+  }
+
+  // Causal Graph - Export (KB only, single dataset, or all KB + datasets)
+  async exportCausalGraph(
+    source: "kb" | "all" | "dataset" = "all",
+    documentName?: string,
+    includeInferred: boolean = true
+  ): Promise<ApiResponse<any>> {
+    if (USE_LOCAL_BACKEND) {
+      const params = new URLSearchParams({
+        source,
+        include_inferred: includeInferred.toString(),
+      });
+      if (source === "dataset" && documentName) params.set("document_name", documentName);
+      const response = await this.request(`/api/knowledge/causal-graph/export?${params.toString()}`, { method: "GET" });
+      return response;
+    }
+    return { success: false, error: "Causal graph export requires local backend" };
   }
 
   // Knowledge Graph - Updated for FastAPI

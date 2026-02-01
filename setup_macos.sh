@@ -58,6 +58,7 @@ pip install pandas
 pip install networkx
 pip install matplotlib
 pip install plotly
+export BLIS_ARCH=generic
 pip install numpy
 pip install fastapi
 pip install uvicorn[standard]
@@ -98,7 +99,7 @@ echo "   Installing spaCy (this may fail on macOS - that's okay, it's optional).
 SPACY_INSTALLED=false
 
 # Try installing spaCy with pip
-if pip install spacy>=3.7.0; then
+if export BLIS_ARCH=generic && pip install spacy>=3.7.0; then
     SPACY_INSTALLED=true
     echo "   ✅ spaCy installed successfully"
     
@@ -131,9 +132,6 @@ echo "✅ Python dependencies installed!"
 echo ""
 echo "📋 Next steps:"
 echo "   1. Install Node.js dependencies: cd RandDKnowledgeGraph && npm install"
-echo "   2. Start the backend: ./start_backend.sh"
-echo "   3. Start the frontend: ./start_frontend.sh"
-echo ""
-echo "   Or use the combined startup script: ./start_all.sh"
+echo "   2. Run the app: ./launch_app.sh"
 echo ""
 

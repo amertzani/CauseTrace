@@ -55,18 +55,18 @@ This app uses Hugging Face OAuth (`hf_oauth: true`) to automatically authenticat
 
 For running the application locally on macOS:
 
-1. **Quick Start**: See `QUICKSTART_MACOS.md` for a 5-minute setup guide
-2. **Detailed Guide**: See `DEPLOYMENT_MACOS.md` for comprehensive instructions
-
-**Quick commands:**
+**Setup (one-time):**
 ```bash
-# Setup (one-time)
 ./setup_macos.sh
 cd RandDKnowledgeGraph && npm install && cd ..
-
-# Run application
-./start_all.sh
 ```
+
+**Run application (backend + frontend, then opens browser):**
+```bash
+./launch_app.sh
+```
+
+**Optional:** Run backend or frontend only: `./start_backend_simple.sh` or `./start_frontend_simple.sh`. Open browser: `./open_app.sh`.
 
 The application will be available at:
 - Frontend: http://localhost:5006

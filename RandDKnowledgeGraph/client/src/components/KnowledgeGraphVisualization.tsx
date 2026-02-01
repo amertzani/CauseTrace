@@ -13,6 +13,8 @@ import * as d3Select from "d3-selection";
 interface KnowledgeGraphVisualizationProps {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  /** Override title (e.g. "Causal Graph" for causal page) */
+  graphTitle?: string;
   onNodeClick?: (node: GraphNode) => void;
   onNodeEdit?: (node: GraphNode) => void;
   onNodeMove?: (nodeId: string, position: { x: number; y: number; z: number }) => void;
@@ -79,6 +81,7 @@ const getNodeColor = (type: string, label: string): { fill: string; stroke: stri
 export function KnowledgeGraphVisualization({ 
   nodes, 
   edges,
+  graphTitle = "Knowledge Graph Network",
   onNodeClick,
   onNodeEdit,
   onNodeMove,
@@ -198,7 +201,7 @@ export function KnowledgeGraphVisualization({
       setSimulationTick(prev => prev + 1);
     });
 
-    // Disable drag behavior - let simulation handle positioning
+    // Node drag will be attached in a separate effect after node groups are rendered
     dragRef.current = null;
 
     // Run simulation longer for better convergence, then stop and fix positions
@@ -219,6 +222,42 @@ export function KnowledgeGraphVisualization({
       simulation.stop();
     };
   }, [nodes, edges]); // Removed pan, zoom, onNodeMove - simulation should not restart on pan/zoom
+
+  // Attach d3-drag to node groups so nodes can be dragged (runs after nodes are rendered)
+  useEffect(() => {
+    if (simulationTick === 0 || !simulationRef.current || nodes.length === 0) return;
+    const drag = d3Drag.drag<SVGGElement, NodeWithPosition>()
+      .on("start", (event) => {
+        event.sourceEvent?.stopPropagation?.(); // prevent canvas pan
+        const node = event.subject;
+        if (node != null && node.x != null && node.y != null) {
+          node.fx = node.x;
+          node.fy = node.y;
+        }
+      })
+      .on("drag", (event) => {
+        const node = event.subject;
+        if (node != null) {
+          node.fx = event.x;
+          node.fy = event.y;
+          setSimulationTick((t) => t + 1);
+        }
+      })
+      .on("end", (event) => {
+        const node = event.subject;
+        if (node != null) {
+          node.fx = event.x;
+          node.fy = event.y;
+          setSimulationTick((t) => t + 1);
+          onNodeMove?.(node.id, { x: event.x, y: event.y, z: 0 });
+        }
+      });
+    nodeGroupsRef.current.forEach((el, nodeId) => {
+      const node = nodesRef.current.find((n) => n.id === nodeId);
+      if (node) d3Select.select(el).datum(node).call(drag);
+    });
+    dragRef.current = drag;
+  }, [simulationTick, nodes.length, onNodeMove]);
 
   // Filter nodes and edges
   const filteredData = useMemo(() => {
@@ -410,7 +449,7 @@ export function KnowledgeGraphVisualization({
   return (
     <Card className="p-6">
       <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
-        <h3 className="text-lg font-semibold">Knowledge Graph Network</h3>
+        <h3 className="text-lg font-semibold">{graphTitle}</h3>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -687,6 +726,7 @@ export function KnowledgeGraphVisualization({
               return (
                 <g
                   key={node.id}
+                  className="node-group"
                   ref={(el) => {
                     if (el) {
                       nodeGroupsRef.current.set(node.id, el);
@@ -873,6 +913,7 @@ export function KnowledgeGraphVisualization({
           <p className="font-semibold mb-1">💡 Navigation:</p>
           <ul className="space-y-1">
             <li>• <strong>Drag canvas</strong> to pan</li>
+            <li>• <strong>Drag nodes</strong> to reposition</li>
             <li>• <strong>Pinch/scroll</strong> to zoom</li>
             <li>• <strong>Click nodes</strong> to select</li>
             <li>• <strong>Click "Connect"</strong> to link nodes</li>

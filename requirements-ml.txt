@@ -1,0 +1,22 @@
+# ML / NLP / Causal stack — install AFTER requirements-core.txt
+# Run: BLIS_ARCH=generic pip install -r requirements-ml.txt
+# Pinned versions avoid pip ResolutionTooDeep.
+# Keep numpy<2 so spacy/thinc/pyarrow stay compatible.
+
+numpy>=1.24,<2.0
+
+# UI
+gradio==4.44.0
+
+# NLP
+spacy==3.7.6
+
+# ML (constrain to avoid resolver backtracking)
+transformers>=4.30.0,<4.46
+torch>=2.0.0
+accelerate>=0.20.0
+bitsandbytes>=0.41.0
+
+# Causal discovery & inference (dowhy 0.13 for numpy<2 compatibility)
+causal-learn==0.1.4.4
+dowhy>=0.13,<0.14

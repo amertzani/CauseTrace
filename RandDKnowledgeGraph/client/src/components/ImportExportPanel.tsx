@@ -20,6 +20,7 @@ import {
 
 interface ImportExportPanelProps {
   onExport: (includeInferred: boolean, minConfidence: number) => void;
+  onExportCausalGraph?: () => void;
   onImport: (file: File) => void;
   metadata?: {
     version: string;
@@ -28,7 +29,7 @@ interface ImportExportPanelProps {
   };
 }
 
-export function ImportExportPanel({ onExport, onImport, metadata }: ImportExportPanelProps) {
+export function ImportExportPanel({ onExport, onExportCausalGraph, onImport, metadata }: ImportExportPanelProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [includeInferred, setIncludeInferred] = useState(true);
@@ -134,6 +135,19 @@ export function ImportExportPanel({ onExport, onImport, metadata }: ImportExport
           </DialogContent>
         </Dialog>
       </Card>
+
+      {onExportCausalGraph && (
+        <Card className="p-6">
+          <h3 className="text-lg font-semibold mb-4">Export Causal Graph</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            Download causal relationships (KB + all data-driven datasets) as JSON for backup or sharing.
+          </p>
+          <Button onClick={onExportCausalGraph} variant="outline" data-testid="button-export-causal">
+            <Download className="h-4 w-4 mr-2" />
+            Download Causal Graph
+          </Button>
+        </Card>
+      )}
 
       <Card className="p-6">
         <h3 className="text-lg font-semibold mb-4">Import Knowledge Base</h3>

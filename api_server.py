@@ -28,14 +28,14 @@ To run:
     
 Or use the convenience scripts:
     start_api.bat (Windows)
-    start_backend.sh (macOS/Linux)
+    launch_app.sh (macOS/Linux) or start_backend_simple.sh for backend only
     
 The scripts automatically activate the virtual environment if available.
 
 Author: Research Brain Team
 Last Updated: 2025-01-15
 """
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -44,6 +44,7 @@ import os
 import tempfile
 import json
 import re
+import asyncio
 from datetime import datetime
 
 # Import your existing modules
@@ -59,45 +60,50 @@ from knowledge import (
     import_knowledge_from_json_file as kb_import_json
 )
 from file_processing import handle_file_upload as fp_handle_file_upload
-from documents_store import add_document, get_all_documents, delete_document as ds_delete_document, cleanup_documents_without_facts, delete_all_documents as ds_delete_all_documents
-from knowledge import create_comprehensive_backup as kb_create_comprehensive_backup
+from documents_store import add_document, get_all_documents, delete_document as ds_delete_document, cleanup_documents_without_facts, delete_all_documents as ds_delete_all_documents, save_documents as ds_save_documents, DOCUMENTS_FILE as DOCUMENTS_FILE_PATH
+from knowledge import create_comprehensive_backup as kb_create_comprehensive_backup, KNOWLEDGE_FILE as KG_FILE, BACKUP_FILE as KG_BACKUP_FILE
 
 from contextlib import asynccontextmanager
 
 # Load knowledge graph on startup using lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    print("Initializing knowledge graph...")
+    # Startup: clear cache and uploaded sources on every restart (clean slate)
+    print("Initializing server (clearing cache and uploaded sources on restart)...")
     try:
-        # Load existing knowledge graph instead of clearing
-        print("📂 Loading existing knowledge graph...")
-        load_result = kb_load_knowledge_graph()
-        fact_count = len(kb_graph)
-        print(f"✅ Knowledge graph loaded with {fact_count} facts")
-        
-        # Load and verify documents
-        all_docs = get_all_documents()
-        print(f"✅ Found {len(all_docs)} documents in store")
-        
-        # Clean up documents without facts (but don't delete all documents)
-        # This only removes documents that truly have no facts
-        if fact_count > 0:
-            cleaned = cleanup_documents_without_facts()
-            if cleaned > 0:
-                print(f"🧹 Cleaned up {cleaned} documents without facts")
-        else:
-            print("⚠️  Knowledge graph is empty - documents will be preserved until facts are added")
-        
-        # IMPORTANT: Verify the graph file is actually empty
-        import os
-        if os.path.exists("knowledge_graph.pkl"):
-            file_size = os.path.getsize("knowledge_graph.pkl")
-            print(f"✅ Graph file size after clear: {file_size} bytes")
-            if file_size > 1000:  # If file is still large, something went wrong
-                print(f"⚠️  WARNING: Graph file is {file_size} bytes but graph has {fact_count} facts!")
-                print("⚠️  This might indicate the clear didn't work properly")
-        
+        # 1. Remove persistence files so no old data can be loaded (bulletproof)
+        from causal_graph import CAUSAL_STORE_PATH
+        for path, name in [
+            (KG_FILE, "knowledge_graph.pkl"),
+            (KG_BACKUP_FILE, "knowledge_backup.json"),
+            (DOCUMENTS_FILE_PATH, "documents_store.json"),
+            (CAUSAL_STORE_PATH, "causal_graphs_store.json"),
+        ]:
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                    print(f"🧹 Removed {name}")
+                except Exception as e:
+                    print(f"⚠️  Could not remove {path}: {e}")
+
+        # 2. Clear in-memory knowledge graph and write empty file (so graph is empty and file exists)
+        kb_delete_all_knowledge()
+
+        # 3. Write empty documents store (file was removed above)
+        ds_save_documents([])
+
+        # 4. Recreate empty data-driven causal graph store (file was removed above)
+        try:
+            from causal_graph import clear_data_driven_causal_graphs
+            clear_data_driven_causal_graphs()
+            print("🧹 Cleared data-driven causal graph store")
+        except Exception as e:
+            print(f"⚠️  Could not clear causal graph store: {e}")
+            import traceback
+            traceback.print_exc()
+
+        print("✅ Server started with clean state (no persisted documents or facts)")
+
         # Pre-load LLM model in background to avoid timeout on first request
         print("🔄 Pre-loading LLM model for research assistant (this may take 1-2 minutes)...")
         import asyncio
@@ -163,6 +169,13 @@ class AddFactRequest(BaseModel):
 class DeleteKnowledgeRequest(BaseModel):
     keyword: Optional[str] = None
     count: Optional[int] = None
+
+
+class DoWhyEffectRequest(BaseModel):
+    document_name: str
+    treatment: str
+    outcome: str
+    method: Optional[str] = "backdoor.linear_regression"
 
 # ==========================================================
 # API Endpoints
@@ -246,8 +259,8 @@ async def add_knowledge_endpoint(request: AddKnowledgeRequest):
         kb_save_knowledge_graph()
         
         # Verify save worked
-        if os.path.exists("knowledge_graph.pkl"):
-            file_size = os.path.getsize("knowledge_graph.pkl")
+        if os.path.exists(KG_FILE):
+            file_size = os.path.getsize(KG_FILE)
             print(f"✅ Knowledge saved - file size: {file_size} bytes, facts in graph: {len(kb_graph)}")
         
         # Extract extraction method from result message
@@ -344,8 +357,8 @@ async def create_fact_endpoint(request: AddFactRequest):
         print(f"✅ Total facts in graph: {fact_count}")
         
         # Verify file was written
-        if os.path.exists("knowledge_graph.pkl"):
-            file_size = os.path.getsize("knowledge_graph.pkl")
+        if os.path.exists(KG_FILE):
+            file_size = os.path.getsize(KG_FILE)
             print(f"✅ Knowledge file size: {file_size} bytes")
         
         # Get details for the response
@@ -399,8 +412,10 @@ async def triplex_status_endpoint():
         raise HTTPException(status_code=500, detail=f"Error getting Triplex status: {str(e)}")
 
 @app.post("/api/knowledge/upload")
-async def upload_file_endpoint(files: List[UploadFile] = File(...)):
+async def upload_file_endpoint(files: List[UploadFile] = File(..., description="Files to upload (use form field name 'files')")):
     """Upload and process files (PDF, DOCX, TXT, CSV)"""
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided. Send multipart form with field 'files'.")
     tmp_paths = []  # Initialize outside try block so finally can access it
     try:
         facts_before = len(kb_graph)
@@ -426,9 +441,40 @@ async def upload_file_endpoint(files: List[UploadFile] = File(...)):
                 })
         
         try:
-            # Process all files at once (handle_file_upload expects a list)
-            # Pass the mapping of temp paths to original filenames
-            result = fp_handle_file_upload(tmp_paths, original_filenames=temp_to_original)
+            # Process all files in a thread so the event loop stays responsive
+            # (handle_file_upload / add_to_graph can be slow for large files)
+            upload_result = await asyncio.to_thread(
+                fp_handle_file_upload, tmp_paths, original_filenames=temp_to_original
+            )
+            
+            # Handle both string (legacy) and dict (new) return formats
+            if isinstance(upload_result, dict):
+                result = upload_result.get('summary', '')
+                file_results = upload_result.get('file_results', [])
+            else:
+                result = upload_result
+                file_results = []
+            
+            # Data-driven causal discovery for CSV files (causal-learn)
+            for tmp_path in tmp_paths:
+                orig = temp_to_original.get(tmp_path, '')
+                if orig.lower().endswith('.csv') and os.path.exists(tmp_path):
+                    try:
+                        from causal_graph import (
+                            discover_causal_structure_from_csv,
+                            save_data_driven_causal_graph,
+                        )
+                        graph_data = discover_causal_structure_from_csv(tmp_path)
+                        if "error" not in graph_data:
+                            save_data_driven_causal_graph(orig, graph_data)
+                            print(f"✅ Data-driven causal graph saved for {orig} (select it in Causal Graph → Source)")
+                        else:
+                            print(f"⚠️  Causal discovery for {orig}: {graph_data.get('error')}")
+                    except Exception as e:
+                        err = str(e)
+                        print(f"⚠️  Causal discovery failed for {orig}: {err}")
+                        if "causallearn" in err.lower() or "causal-learn" in err.lower():
+                            print("   → Install with: pip install causal-learn")
             
             # IMPORTANT: Ensure graph is saved to disk
             # add_to_graph already saves, but let's make sure it's persisted
@@ -461,11 +507,12 @@ async def upload_file_endpoint(files: List[UploadFile] = File(...)):
             added_count = int(added_match.group(1)) if added_match else facts_extracted
             skipped_count = int(skipped_match.group(1)) if skipped_match else 0
             
-            # Extract extraction method from result
+            # Extract extraction method from result (result is always str here)
             extraction_method = "regex"
-            if "TRIPLEX" in result.upper():
+            result_upper = (result or "").upper()
+            if "TRIPLEX" in result_upper:
                 extraction_method = "triplex"
-            elif "FALLBACK" in result.upper():
+            elif "FALLBACK" in result_upper:
                 extraction_method = "regex (triplex fallback)"
             
             print(f"✅ Upload processed {len(files)} file(s)")
@@ -534,8 +581,8 @@ async def upload_file_endpoint(files: List[UploadFile] = File(...)):
             
             # Verify final state
             final_fact_count = len(kb_graph)
-            if os.path.exists("knowledge_graph.pkl"):
-                file_size = os.path.getsize("knowledge_graph.pkl")
+            if os.path.exists(KG_FILE):
+                file_size = os.path.getsize(KG_FILE)
                 print(f"✅ Final save - file size: {file_size} bytes, facts in graph: {final_fact_count}")
                 
             # Update total_facts in response to reflect actual graph state
@@ -555,7 +602,8 @@ async def upload_file_endpoint(files: List[UploadFile] = File(...)):
                 "facts_extracted": added_count,  # Use actual added count
                 "facts_skipped": skipped_count,   # Add skipped duplicates count
                 "extraction_method": extraction_method,  # Indicate which method was used
-                "documents": processed_docs
+                "documents": processed_docs,
+                "file_results": file_results  # Include detailed file results with CSV stats
             }
         finally:
             # Clean up temporary files
@@ -635,6 +683,212 @@ async def get_graph_endpoint():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting graph: {str(e)}")
 
+@app.get("/api/knowledge/causal-graph")
+async def get_causal_graph_endpoint(
+    include_inferred: bool = Query(True, description="Include inferred causal relationships"),
+    source: Optional[str] = Query("kb", description="Source: 'kb' (knowledge base) or 'dataset'"),
+    document_name: Optional[str] = Query(None, description="Document name for source=dataset"),
+):
+    """Get causal graph: from knowledge base (default) or data-driven from a CSV dataset"""
+    try:
+        if source == "dataset" and document_name:
+            from causal_graph import get_data_driven_causal_graph
+            causal_data = get_data_driven_causal_graph(document_name)
+            if not causal_data:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No data-driven causal graph found for document: {document_name}",
+                )
+            return {
+                "nodes": causal_data.get("nodes", []),
+                "edges": causal_data.get("edges", []),
+                "stats": causal_data.get("stats", {}),
+                "status": "success",
+                "source": "dataset",
+                "document_name": document_name,
+            }
+        # Default: from knowledge base
+        from causal_graph import get_causal_graph_data
+        print(f"📊 Causal graph requested (include_inferred={include_inferred})")
+        causal_data = get_causal_graph_data(include_inferred=include_inferred)
+        print(f"✅ Causal graph generated: {len(causal_data['nodes'])} nodes, {len(causal_data['edges'])} edges")
+        return {
+            "nodes": causal_data["nodes"],
+            "edges": causal_data["edges"],
+            "stats": causal_data["stats"],
+            "status": "success",
+            "source": "kb",
+        }
+    except HTTPException:
+        raise
+    except ImportError as e:
+        print(f"❌ Import error in causal graph: {e}")
+        raise HTTPException(status_code=500, detail=f"Error importing causal graph module: {str(e)}")
+    except Exception as e:
+        print(f"❌ Error generating causal graph: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error generating causal graph: {str(e)}")
+
+
+@app.get("/api/knowledge/causal-graph/sources")
+async def get_causal_graph_sources_endpoint():
+    """List available causal graph sources: KB + document names with data-driven graphs"""
+    try:
+        from causal_graph import list_data_driven_causal_graph_sources
+        data_driven = list_data_driven_causal_graph_sources()
+        sources = [
+            {"id": "kb", "label": "Causal graph from knowledge base", "type": "kb"},
+            *[{"id": name, "label": f"Dataset: {name}", "type": "dataset"} for name in data_driven],
+        ]
+        print(f"✅ Causal graph sources: {len(sources)} total ({len(data_driven)} dataset(s))")
+        return {"sources": sources, "status": "success"}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"⚠️  Causal graph sources failed: {e} — returning KB only")
+        return {
+            "sources": [{"id": "kb", "label": "Causal graph from knowledge base", "type": "kb"}],
+            "status": "success",
+        }
+
+
+@app.get("/api/knowledge/causal-graph/export")
+async def export_causal_graph_endpoint(
+    source: str = Query("all", description="Export: 'kb' (knowledge base only), 'all' (KB + all datasets), or 'dataset' (single dataset)"),
+    document_name: Optional[str] = Query(None, description="Required when source=dataset: document name with data-driven graph"),
+    include_inferred: bool = Query(True, description="Include inferred causal relationships (for KB)"),
+):
+    """Export causal graph(s) as JSON: KB only, all sources (KB + datasets), or one dataset."""
+    try:
+        from datetime import datetime
+        from causal_graph import (
+            get_causal_graph_data,
+            list_data_driven_causal_graph_sources,
+            get_data_driven_causal_graph,
+        )
+        exported_at = datetime.now().isoformat()
+
+        if source == "kb":
+            causal_data = get_causal_graph_data(include_inferred=include_inferred)
+            export_data = {
+                "metadata": {
+                    "version": "1.0",
+                    "exported_at": exported_at,
+                    "source": "kb",
+                    "include_inferred": include_inferred,
+                },
+                "nodes": causal_data.get("nodes", []),
+                "edges": causal_data.get("edges", []),
+                "stats": causal_data.get("stats", {}),
+            }
+            print(f"✅ GET /api/knowledge/causal-graph/export: KB — {len(export_data['nodes'])} nodes, {len(export_data['edges'])} edges")
+            return export_data
+
+        if source == "dataset":
+            if not document_name:
+                raise HTTPException(status_code=400, detail="document_name required when source=dataset")
+            graph_data = get_data_driven_causal_graph(document_name)
+            if not graph_data:
+                raise HTTPException(status_code=404, detail=f"No data-driven graph found for: {document_name}")
+            export_data = {
+                "metadata": {
+                    "version": "1.0",
+                    "exported_at": exported_at,
+                    "source": "dataset",
+                    "document_name": document_name,
+                },
+                "nodes": graph_data.get("nodes", []),
+                "edges": graph_data.get("edges", []),
+                "stats": graph_data.get("stats", {}),
+            }
+            if graph_data.get("data_columns") is not None and graph_data.get("data_rows") is not None:
+                export_data["data_columns"] = graph_data["data_columns"]
+                export_data["data_rows"] = graph_data["data_rows"]
+            print(f"✅ GET /api/knowledge/causal-graph/export: dataset {document_name} — {len(export_data['nodes'])} nodes, {len(export_data['edges'])} edges")
+            return export_data
+
+        # source == "all": KB + all data-driven datasets
+        kb_data = get_causal_graph_data(include_inferred=include_inferred)
+        datasets = list_data_driven_causal_graph_sources()
+        export_data = {
+            "metadata": {
+                "version": "1.0",
+                "exported_at": exported_at,
+                "sources": ["kb"] + datasets,
+                "include_inferred": include_inferred,
+            },
+            "kb": {
+                "nodes": kb_data.get("nodes", []),
+                "edges": kb_data.get("edges", []),
+                "stats": kb_data.get("stats", {}),
+            },
+            "datasets": {},
+        }
+        for doc_name in datasets:
+            g = get_data_driven_causal_graph(doc_name)
+            if g:
+                entry = {
+                    "nodes": g.get("nodes", []),
+                    "edges": g.get("edges", []),
+                    "stats": g.get("stats", {}),
+                }
+                if g.get("data_columns") is not None and g.get("data_rows") is not None:
+                    entry["data_columns"] = g["data_columns"]
+                    entry["data_rows"] = g["data_rows"]
+                export_data["datasets"][doc_name] = entry
+        total_nodes = len(export_data["kb"]["nodes"]) + sum(len(v.get("nodes", [])) for v in export_data["datasets"].values())
+        total_edges = len(export_data["kb"]["edges"]) + sum(len(v.get("edges", [])) for v in export_data["datasets"].values())
+        print(f"✅ GET /api/knowledge/causal-graph/export: all — {total_nodes} nodes, {total_edges} edges (kb + {len(datasets)} dataset(s))")
+        return export_data
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error exporting causal graph: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error exporting causal graph: {str(e)}")
+
+
+@app.post("/api/knowledge/causal-graph/dowhy")
+async def dowhy_effect_estimation_endpoint(body: DoWhyEffectRequest):
+    """Run DoWhy causal effect estimation on a data-driven causal graph (dataset only)."""
+    try:
+        try:
+            import dowhy  # noqa: F401
+        except ModuleNotFoundError:
+            raise HTTPException(
+                status_code=503,
+                detail="DoWhy is not installed. In your backend environment run: pip install dowhy (or pip install -r requirements.txt), then restart the backend.",
+            )
+        from causal_graph import run_dowhy_effect_estimation
+        result = run_dowhy_effect_estimation(
+            document_name=body.document_name,
+            treatment=body.treatment,
+            outcome=body.outcome,
+            method=body.method or "backdoor.linear_regression",
+        )
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=400,
+                detail=result.get("error", "DoWhy estimation failed"),
+            )
+        return {
+            "success": True,
+            "treatment": result["treatment"],
+            "outcome": result["outcome"],
+            "estimate_value": result.get("estimate_value"),
+            "estimate": result.get("estimate"),
+            "refutation": result.get("refutation"),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/knowledge/contents")
 async def get_contents_endpoint():
     """Get all knowledge graph contents as text"""
@@ -662,8 +916,8 @@ async def get_facts_endpoint(
         
         # Debug: If graph is empty but file exists, something is wrong
         import os
-        if len(kb_graph) == 0 and os.path.exists("knowledge_graph.pkl"):
-            file_size = os.path.getsize("knowledge_graph.pkl")
+        if len(kb_graph) == 0 and os.path.exists(KG_FILE):
+            file_size = os.path.getsize(KG_FILE)
             if file_size > 1000:  # File has data but graph is empty
                 print(f"⚠️  WARNING: Graph file is {file_size} bytes but graph is empty!")
                 # Try reloading again
@@ -861,8 +1115,8 @@ async def get_facts_endpoint(
         else:
             print("   ⚠️  No facts in graph!")
             # Debug: Check if file exists
-            if os.path.exists("knowledge_graph.pkl"):
-                file_size = os.path.getsize("knowledge_graph.pkl")
+            if os.path.exists(KG_FILE):
+                file_size = os.path.getsize(KG_FILE)
                 print(f"   📁 knowledge_graph.pkl exists ({file_size} bytes) but graph is empty!")
                 # If file exists but no facts, try to see what's in the graph
                 all_triples = list(kb_graph)
@@ -1539,29 +1793,28 @@ if __name__ == "__main__":
     port = int(os.getenv("API_PORT", 8001))
     host = os.getenv("API_HOST", "0.0.0.0")  # Bind to all interfaces for external access
     
-    # Check if the requested port is available, if not try alternatives
+    # Check if the requested port is available (use same host as uvicorn to avoid bind failures)
     import socket
     def is_port_available(check_port):
-        """Check if a port is available by trying to bind to it"""
+        """Check if a port is available by trying to bind to it on the same host uvicorn will use."""
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            sock.bind(('127.0.0.1', check_port))
+            sock.bind((host, check_port))
             sock.close()
             return True
         except OSError:
             return False
-    
-    # Try the requested port first, then alternatives if needed
-    if not is_port_available(port):
-        print(f"⚠️  Port {port} is busy, trying alternatives...")
-        for attempt_port in [8001, 8002, 8003, 8004]:
-            if attempt_port != port and is_port_available(attempt_port):
-                port = attempt_port
-                print(f"✅ Using port {port} instead")
-                break
-        else:
-            print(f"⚠️  Warning: Could not find available port, using {port} anyway (may fail if busy)")
+
+    # Try requested port first, then 8002, 8003, 8004 so a second run (e.g. Code Runner) doesn't crash
+    for attempt_port in [port, 8002, 8003, 8004]:
+        if is_port_available(attempt_port):
+            port = attempt_port
+            if attempt_port != int(os.getenv("API_PORT", 8001)):
+                print(f"⚠️  Port 8001 busy; using port {port} instead. Frontend: http://localhost:{port}")
+            break
+    else:
+        print(f"⚠️  Ports 8001–8004 busy. Using {port} anyway (may fail). Stop other backends or set API_PORT.")
     
     print(f"Starting NesyX API server on http://{host}:{port}")
     print(f"API documentation available at http://localhost:{port}/docs")
