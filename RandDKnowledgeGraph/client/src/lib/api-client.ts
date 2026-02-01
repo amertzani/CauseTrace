@@ -701,6 +701,11 @@ class HuggingFaceApiClient {
       error: "Simulator requires local backend",
     };
   }
+
+  /** Reset app: erase all documents, knowledge base, and knowledge graph */
+  async resetAll(): Promise<ApiResponse<any>> {
+    return this.request("/api/reset", { method: "POST" });
+  }
 }
 
 // Export singleton instance
