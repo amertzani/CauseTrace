@@ -4,8 +4,15 @@ import { FileText, Calendar, HardDrive } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { hfApi } from "@/lib/api-client";
+import { hfApi, getUploadedDocNamesSession } from "@/lib/api-client";
 import type { Document } from "@shared/schema";
+
+/** Hide test/demo documents from the list (e.g. test_upload.csv, upload_test.csv). */
+function isTestDocument(name: string): boolean {
+  if (!name) return false;
+  const n = name.toLowerCase();
+  return ["test_upload", "upload_test", "test_dataset", "test.csv"].some((p) => n.includes(p));
+}
 
 export default function DocumentsPage() {
   const [searchTerm, setSearchTerm] = useState("");
@@ -26,10 +33,11 @@ export default function DocumentsPage() {
     try {
       const result = await hfApi.getDocuments();
       if (result.success && result.data?.documents) {
-        // Backend already filters to only return documents with facts_extracted > 0
-        // Map backend documents to frontend Document format
+        // Backend filters test data; frontend also hides test/demo documents
+        const sessionUploaded = getUploadedDocNamesSession();
         const mappedDocs: Document[] = result.data.documents
-          .filter((doc: any) => (doc.facts_extracted || 0) > 0) // Extra safety filter
+          .filter((doc: any) => !isTestDocument(doc.name || ""))
+          .filter((doc: any) => sessionUploaded.includes(doc.name || "")) // Only show docs uploaded this session
           .map((doc: any) => ({
             id: doc.id || String(doc.name),
             name: doc.name,

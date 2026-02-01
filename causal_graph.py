@@ -67,7 +67,7 @@ POTENTIALLY_CAUSAL = {
     'affects', 'influences', 'relates to', 'associated with',
     'correlated with', 'linked to', 'connected to',
     'part of', 'contains', 'includes', 'leads to', 'contributes to',
-    'supports', 'enables', 'related to',
+    'supports', 'enables', 'related to', 'belongs to',
 }
 
 # Predicates that are NOT causal (exclude these)
@@ -215,6 +215,48 @@ def extract_causal_relationships() -> List[Dict]:
     return causal_relationships
 
 
+def extract_all_relationships_as_weak_causal() -> List[Dict]:
+    """
+    When no strong causal predicates are found, treat all KB relationships as weak causal
+    so the Causal Graph and Causal Relationships pages still show data.
+    Skips only NON_CAUSAL predicates (e.g. 'is', 'has', 'located in').
+    """
+    relationships = []
+    seen = set()
+    for subject, predicate, obj in graph:
+        subject_str = str(subject).split(':')[-1] if ':' in str(subject) else str(subject)
+        predicate_str = str(predicate).split(':')[-1] if ':' in str(predicate) else str(predicate)
+        object_str = str(obj).split(':')[-1] if ':' in str(obj) else str(obj)
+        try:
+            subject_str = unquote(subject_str.replace('_', ' '))
+            predicate_str = unquote(predicate_str.replace('_', ' '))
+            object_str = unquote(object_str.replace('_', ' '))
+        except Exception:
+            pass
+        pred_lower = predicate_str.lower().strip()
+        if pred_lower in NON_CAUSAL:
+            continue
+        # Skip internal/metadata predicates
+        if any(skip in pred_lower for skip in ('fact_subject', 'fact_predicate', 'fact_object', 'has_details', 'source_document', 'uploaded_at')):
+            continue
+        rel_key = (subject_str.lower(), pred_lower, object_str.lower())
+        if rel_key in seen:
+            continue
+        seen.add(rel_key)
+        details = get_fact_details(subject_str, predicate_str, object_str)
+        source_docs = get_fact_source_document(subject_str, predicate_str, object_str)
+        source_doc = source_docs[0][0] if source_docs else "unknown"
+        relationships.append({
+            'source': subject_str,
+            'target': object_str,
+            'relationship': predicate_str,
+            'details': details or f"{subject_str} {predicate_str} {object_str}",
+            'confidence': 0.4,
+            'source_document': source_doc,
+        })
+    return relationships
+
+
 def infer_causal_relationships(causal_rels: List[Dict]) -> List[Dict]:
     """
     Infer additional causal relationships through transitive reasoning.
@@ -287,12 +329,100 @@ def infer_causal_relationships(causal_rels: List[Dict]) -> List[Dict]:
 # ---------------------------------------------------------------------------
 # Data-driven causal discovery (causal-learn)
 # ---------------------------------------------------------------------------
+#
+# How the causal graph is constructed from data (CSV):
+#
+# 1. Load CSV: Try multiple delimiters (comma, semicolon, tab) and decimal
+#    separators so different formats work. Require at least 2 columns.
+#
+# 2. Numeric subset: Keep only columns with at least 2 valid numeric values;
+#    drop rows/cols that are all NaN. Require at least 10 rows after dropna.
+#
+# 3. Run PC algorithm (causal-learn): pc(data, alpha=0.05, indep_test=fisherz).
+#    Input: (n_samples, n_vars) float64 matrix. Output: causal-learn graph
+#    with adjacency matrix G where (i,j)=1 tail at i, (i,j)=-1 head at j
+#    => directed edge i -> j.
+#
+# 4. Interpret adjacency matrix: For each (i,j) with i != j:
+#    - (i,j)=-1 and (j,i)=1 => directed edge i -> j (cause -> effect).
+#    - (i,j)=1 and (j,i)=-1 => directed edge j -> i.
+#    - Other non-zero (undirected/circle) => pick one direction for display.
+#
+# 5. Enforce DAG: _make_acyclic() keeps only edges that do not create cycles
+#    (add edge (u,v) only if there is no path v -> u).
+#
+# 6. Build UI format: Nodes = one per variable (id, label, type="variable",
+#    connections). Edges = list of {id, source, target, label="causes",
+#    details, confidence=0.8, source_document="data"}.
+#
+# 7. Persist for DoWhy: Store data_columns (variable names) and data_rows
+#    (up to 5000 rows) so DoWhy can run effect estimation later.
+#
+# Entry point: discover_causal_structure_from_csv(csv_path, ...).
+# Storage: save_data_driven_causal_graph(document_name, graph_data).
+# ---------------------------------------------------------------------------
 
 # Edge type constants in causal-learn graph matrix
 # 0 = no edge, 1 = tail (arrow from), -1 = head (arrow to), 2 = circle (undirected)
 _EDGE_TAIL = 1
 _EDGE_HEAD = -1
 _EDGE_NONE = 0
+
+
+def _node_name_to_index(name: str, n_vars: int) -> Optional[int]:
+    """Map causal-learn node name (X1, X2, ... 1-based) to 0-based index."""
+    if not name or not isinstance(name, str):
+        return None
+    name = name.strip()
+    if name.startswith("X") and name[1:].isdigit():
+        idx = int(name[1:]) - 1
+        if 0 <= idx < n_vars:
+            return idx
+    return None
+
+
+def _build_edges_list_from_pc_graph(G, n_vars: int) -> List[Tuple[int, int]]:
+    """
+    Build list of (from_idx, to_idx) from causal-learn graph G using get_graph_edges().
+    This is the canonical way to get all relations (directed and undirected).
+    - Directed: endpoint1 is TAIL, endpoint2 is ARROW => node1 -> node2.
+    - Undirected (CIRCLE-CIRCLE, TAIL-TAIL): show as one directed edge for display.
+    """
+    edges_list: List[Tuple[int, int]] = []
+    try:
+        from causallearn.graph.Endpoint import Endpoint
+    except ImportError:
+        return edges_list
+    if not hasattr(G, "get_graph_edges"):
+        return edges_list
+    graph_edges = G.get_graph_edges()
+    if not graph_edges:
+        return edges_list
+    seen = set()  # (i, j) to avoid duplicate undirected
+    for edge in graph_edges:
+        n1 = edge.get_node1()
+        n2 = edge.get_node2()
+        ep1 = edge.get_endpoint1()
+        ep2 = edge.get_endpoint2()
+        name1 = n1.get_name() if hasattr(n1, "get_name") else str(n1)
+        name2 = n2.get_name() if hasattr(n2, "get_name") else str(n2)
+        i = _node_name_to_index(name1, n_vars)
+        j = _node_name_to_index(name2, n_vars)
+        if i is None or j is None or i == j:
+            continue
+        # Directed: TAIL at node1, ARROW at node2 => 1 -> 2
+        if ep1 == Endpoint.TAIL and ep2 == Endpoint.ARROW:
+            edges_list.append((i, j))
+            continue
+        if ep1 == Endpoint.ARROW and ep2 == Endpoint.TAIL:
+            edges_list.append((j, i))
+            continue
+        # Undirected (CIRCLE-CIRCLE, TAIL-TAIL): show as one directed edge
+        if (i, j) not in seen and (j, i) not in seen:
+            edges_list.append((i, j))
+            seen.add((i, j))
+            seen.add((j, i))
+    return edges_list
 
 
 def discover_causal_structure_from_csv(
@@ -354,12 +484,14 @@ def discover_causal_structure_from_csv(
             result["error"] = "Could not read CSV with multiple columns (try comma or semicolon delimiter)"
             return result
         # Flatten column names (e.g. "Fine\nAggregate" -> "Fine Aggregate")
+        # Keep all columns so every column can form a node; causal discovery uses only numeric subset
         df.columns = [str(c).replace("\n", " ").strip() for c in df.columns]
-        # Drop completely non-numeric columns
+        all_columns = list(df.columns)
+        # Numeric columns (for causal discovery): at least 2 valid numbers
         numeric_cols = []
         for c in df.columns:
             s = pd.to_numeric(df[c], errors="coerce")
-            if s.notna().sum() >= 2:  # at least 2 valid numbers
+            if s.notna().sum() >= 2:
                 numeric_cols.append(c)
         if not numeric_cols:
             result["error"] = "No numeric columns found in CSV"
@@ -380,59 +512,109 @@ def discover_causal_structure_from_csv(
 
         data = df.values.astype(np.float64)
         n_vars = data.shape[1]
-        var_names = numeric_cols
+        var_names = list(numeric_cols)
+
+        # Drop constant columns (zero variance) to avoid singular correlation matrix in PC
+        keep_cols = []
+        for j in range(n_vars):
+            col = data[:, j]
+            if np.var(col) > 1e-10:
+                keep_cols.append(j)
+        if len(keep_cols) < 2:
+            result["error"] = "Need at least 2 non-constant numeric columns (some columns have no variance)"
+            return result
+        if len(keep_cols) < n_vars:
+            data = data[:, keep_cols]
+            var_names = [var_names[j] for j in keep_cols]
+            n_vars = data.shape[1]
 
         # Run PC algorithm (causal-learn)
-        from causallearn.search.ConstraintBased.PC import pc
-        from causallearn.utils.cit import fisherz
+        try:
+            from causallearn.search.ConstraintBased.PC import pc
+            from causallearn.utils.cit import fisherz
+        except ImportError as e:
+            result["error"] = "causal-learn is not installed. Install with: pip install causal-learn (or pip install -r requirements-ml.txt)"
+            return result
 
-        cg = pc(data, alpha=alpha, indep_test=fisherz, show_progress=False)
+        try:
+            cg = pc(data, alpha=alpha, indep_test=fisherz, show_progress=False, stable=True)
+        except Exception as pc_err:
+            # PC failed (e.g. singular correlation matrix): try to derive relations from data values
+            err_msg = str(pc_err)
+            conn_for_col = {var_names[i]: 0 for i in range(n_vars)}
+            result["nodes"] = [{"id": f"node_{_sanitize_id(col)}", "label": col, "type": "variable", "connections": conn_for_col.get(col, 0)} for col in all_columns]
+            result["variable_names"] = var_names
+            result["data_columns"] = var_names
+            _MAX_DOWHY_ROWS = 5000
+            result["data_rows"] = data[: min(len(data), _MAX_DOWHY_ROWS)].tolist()
+            edges_list = _derive_edges_from_data(data, var_names, correlation_threshold=0.2)
+            if edges_list:
+                result["warning"] = f"PC could not run ({err_msg[:80]}…). Relations derived from data (LiNGAM or correlation)."
+                node_connections = {i: 0 for i in range(n_vars)}
+                for i, j in edges_list:
+                    node_connections[i] = node_connections.get(i, 0) + 1
+                    node_connections[j] = node_connections.get(j, 0) + 1
+                conn_for_col = {var_names[i]: node_connections.get(i, 0) for i in range(n_vars)}
+                result["nodes"] = [{"id": f"node_{_sanitize_id(col)}", "label": col, "type": "variable", "connections": conn_for_col.get(col, 0)} for col in all_columns]
+                result["edges"] = [{"id": f"edge_{idx}", "source": f"node_{_sanitize_id(var_names[i])}", "target": f"node_{_sanitize_id(var_names[j])}", "label": "causes", "details": f"Data-driven: {var_names[i]} → {var_names[j]}", "confidence": 0.8, "is_inferred": False, "source_document": "data"} for idx, (i, j) in enumerate(edges_list)]
+                result["stats"] = {"total_nodes": len(all_columns), "total_edges": len(edges_list), "direct_relationships": len(edges_list), "inferred_relationships": 0, "most_causal_entities": [{"entity": var_names[i], "connections": node_connections.get(i, 0)} for i in sorted(range(n_vars), key=lambda k: node_connections.get(k, 0), reverse=True)[:10]], "algorithm": "data-derived", "source": "data"}
+                result["dowhy_pairs"] = [(var_names[i], var_names[j]) for i, j in edges_list]
+            else:
+                result["warning"] = f"Causal discovery could not run: {err_msg}. Showing variable names only."
+                result["edges"] = []
+                result["stats"] = {"total_nodes": len(all_columns), "total_edges": 0, "direct_relationships": 0, "inferred_relationships": 0, "most_causal_entities": [], "algorithm": "PC", "source": "data"}
+                result["dowhy_pairs"] = []
+            return result
 
-        # cg.G is the graph; cg.G.graph is the adjacency matrix
-        # In causal-learn: (i,j)=1 tail at i, (i,j)=-1 head at j => edge i -> j
-        # So (i,j)==1 and (j,i)==-1 means directed edge from i to j
+        # Build edges from causal-learn graph: use get_graph_edges() so all relations (directed + undirected) are shown
         g = cg.G.graph
         if g is None:
             result["error"] = "PC returned no graph"
-            result["nodes"] = [{"id": f"node_{i}", "label": var_names[i], "type": "variable", "connections": 0} for i in range(n_vars)]
-            result["stats"]["total_nodes"] = n_vars
+            result["nodes"] = [{"id": f"node_{_sanitize_id(col)}", "label": col, "type": "variable", "connections": 0} for col in all_columns]
+            result["stats"]["total_nodes"] = len(all_columns)
             return result
 
-        nodes_set = set(range(n_vars))
-        edges_list = []  # (from_idx, to_idx)
-        for i in range(n_vars):
-            for j in range(n_vars):
-                if i == j:
-                    continue
-                # causal-learn: (i,j)=-1 (head at j) and (j,i)=1 (tail at i) => directed edge i -> j
-                val_ij = int(g[i, j]) if hasattr(g, "__getitem__") else 0
-                val_ji = int(g[j, i]) if hasattr(g, "__getitem__") else 0
-                if val_ij == _EDGE_HEAD and val_ji == _EDGE_TAIL:
-                    edges_list.append((i, j))  # i -> j
-                elif val_ij == _EDGE_TAIL and val_ji == _EDGE_HEAD:
-                    edges_list.append((j, i))  # j -> i
-                # Undirected/circle: show as directed for display (pick one direction)
-                elif val_ij != _EDGE_NONE or val_ji != _EDGE_NONE:
-                    if (j, i) not in edges_list and (i, j) not in edges_list:
+        edges_list = _build_edges_list_from_pc_graph(cg.G, n_vars)
+        # Fallback: if get_graph_edges gave nothing, parse adjacency matrix (causal-learn matrix: 1=tail, -1=head)
+        if not edges_list:
+            for i in range(n_vars):
+                for j in range(n_vars):
+                    if i == j:
+                        continue
+                    val_ij = int(g[i, j]) if hasattr(g, "__getitem__") else 0
+                    val_ji = int(g[j, i]) if hasattr(g, "__getitem__") else 0
+                    if val_ij == _EDGE_HEAD and val_ji == _EDGE_TAIL:
                         edges_list.append((i, j))
+                    elif val_ij == _EDGE_TAIL and val_ji == _EDGE_HEAD:
+                        edges_list.append((j, i))
+                    elif val_ij != _EDGE_NONE or val_ji != _EDGE_NONE:
+                        if (j, i) not in edges_list and (i, j) not in edges_list:
+                            edges_list.append((i, j))
 
-        # Ensure acyclic: keep only edges that do not create cycles
+        # Ensure acyclic for display (directed edges from PC are usually acyclic; this avoids cycles from undirected)
         edges_list = _make_acyclic(edges_list, n_vars)
+
+        # If PC gave no edges, derive relations from data (LiNGAM or correlation)
+        if not edges_list:
+            edges_list = _derive_edges_from_data(data, var_names, correlation_threshold=0.2)
+            if edges_list:
+                result["warning"] = "PC found no edges; relations derived from data (LiNGAM or correlation)."
 
         node_connections = {i: 0 for i in range(n_vars)}
         for i, j in edges_list:
             node_connections[i] = node_connections.get(i, 0) + 1
             node_connections[j] = node_connections.get(j, 0) + 1
 
+        # All columns form nodes; connection counts from discovery variables (var_names)
+        conn_for_col = {var_names[i]: node_connections.get(i, 0) for i in range(n_vars)}
         nodes = []
-        for i in range(n_vars):
-            name = var_names[i]
-            node_id = f"node_{_sanitize_id(name)}"
+        for col in all_columns:
+            node_id = f"node_{_sanitize_id(col)}"
             nodes.append({
                 "id": node_id,
-                "label": name,
+                "label": col,
                 "type": "variable",
-                "connections": node_connections.get(i, 0),
+                "connections": conn_for_col.get(col, 0),
             })
         edges = []
         for idx, (i, j) in enumerate(edges_list):
@@ -462,15 +644,109 @@ def discover_causal_structure_from_csv(
             reverse=True,
         )[:10]
         result["stats"]["most_causal_entities"] = [{"entity": name, "connections": count} for name, count in most_causal]
-        # Persist numeric data for DoWhy causal inference (limit rows to keep store size reasonable)
+        # 2. Extract candidate (treatment, outcome) pairs from directed edges for DoWhy
+        result["dowhy_pairs"] = _extract_directed_pairs_from_pc_graph(cg.G, var_names)
+        # Persist numeric data for DoWhy (use same columns as graph; data may be subset if constant cols were dropped)
         _MAX_DOWHY_ROWS = 5000
         result["data_columns"] = var_names
-        result["data_rows"] = df.head(_MAX_DOWHY_ROWS).values.tolist()
+        result["data_rows"] = data[: min(len(data), _MAX_DOWHY_ROWS)].tolist()
         return result
 
     except Exception as e:
         result["error"] = str(e)
         return result
+
+
+def _extract_directed_pairs_from_pc_graph(G, var_names: List[str]) -> List[Tuple[str, str]]:
+    """
+    From causal-learn graph G (from PC), extract (treatment, outcome) pairs for each directed edge.
+    Node names in causal-learn are typically "X1", "X2", ... (1-based) -> map to var_names[index].
+    """
+    pairs: List[Tuple[str, str]] = []
+    try:
+        from causallearn.graph.Endpoint import Endpoint
+    except ImportError:
+        return pairs
+    if not hasattr(G, "get_graph_edges"):
+        return pairs
+    edges = G.get_graph_edges()
+    if not edges:
+        return pairs
+    n_vars = len(var_names)
+    # X1 -> index 0, X2 -> index 1, ...
+    def node_name_to_var(name: str) -> Optional[str]:
+        if not name or not isinstance(name, str):
+            return None
+        name = name.strip()
+        if name.startswith("X") and name[1:].isdigit():
+            idx = int(name[1:]) - 1
+            if 0 <= idx < n_vars:
+                return var_names[idx]
+        return None
+    for edge in edges:
+        ep1, ep2 = edge.get_endpoint1(), edge.get_endpoint2()
+        if ep1 != Endpoint.TAIL or ep2 != Endpoint.ARROW:
+            continue
+        n1 = edge.get_node1()
+        n2 = edge.get_node2()
+        name1 = n1.get_name() if hasattr(n1, "get_name") else str(n1)
+        name2 = n2.get_name() if hasattr(n2, "get_name") else str(n2)
+        t = node_name_to_var(name1)
+        y = node_name_to_var(name2)
+        if t and y and t != y:
+            pairs.append((t, y))
+    return pairs
+
+
+def _derive_edges_from_data(
+    data: Any,
+    var_names: List[str],
+    correlation_threshold: float = 0.2,
+) -> List[Tuple[int, int]]:
+    """
+    When PC gives no edges, derive relations from data values:
+    1. Try LiNGAM (directed edges from linear non-Gaussian model).
+    2. Else use correlation: add edge (i, j) for |corr(i,j)| >= threshold (direction i->j for i<j).
+    Returns list of (from_idx, to_idx).
+    """
+    import numpy as np
+    n_vars = len(var_names)
+    if n_vars < 2 or data is None or data.shape[1] < 2:
+        return []
+
+    # 1. Try LiNGAM (directed edges)
+    try:
+        from causallearn.search.FCMBased.lingam import DirectLiNGAM
+        model = DirectLiNGAM()
+        model.fit(np.asarray(data, dtype=np.float64))
+        B = model.adjacency_matrix_
+        if B is not None:
+            n = min(B.shape[0], n_vars)
+            edges = []
+            for i in range(n):
+                for j in range(n):
+                    if i != j and B[i, j] != 0:
+                        edges.append((j, i))  # LiNGAM: B[i,j] => j -> i
+            if edges:
+                return _make_acyclic(edges, n_vars)
+    except Exception:
+        pass
+
+    # 2. Correlation-based: edge between variables with |corr| >= threshold
+    try:
+        corr = np.corrcoef(data.T)
+        if corr is None or corr.shape[0] < 2:
+            return []
+        edges = []
+        for i in range(n_vars):
+            for j in range(i + 1, n_vars):
+                if i < corr.shape[0] and j < corr.shape[1]:
+                    r = corr[i, j]
+                    if np.isfinite(r) and abs(r) >= correlation_threshold:
+                        edges.append((i, j))  # one direction for display
+        return edges
+    except Exception:
+        return []
 
 
 def _make_acyclic(edges_list: List[Tuple[int, int]], n_vars: int) -> List[Tuple[int, int]]:
@@ -545,6 +821,10 @@ def save_data_driven_causal_graph(document_name: str, graph_data: Dict[str, Any]
     if graph_data.get("data_columns") and graph_data.get("data_rows") is not None:
         entry["data_columns"] = graph_data["data_columns"]
         entry["data_rows"] = graph_data["data_rows"]
+    if graph_data.get("dowhy_pairs") is not None:
+        entry["dowhy_pairs"] = graph_data["dowhy_pairs"]
+    if graph_data.get("warning"):
+        entry["warning"] = graph_data["warning"]
     store["graphs"][document_name] = entry
     _save_causal_graphs_store(store)
 
@@ -574,6 +854,7 @@ def run_dowhy_effect_estimation(
         "outcome": outcome,
         "estimate": None,
         "estimate_value": None,
+        "interpretation": None,
         "refutation": None,
         "error": None,
     }
@@ -618,6 +899,21 @@ def run_dowhy_effect_estimation(
         estimate = model.estimate_effect(identified, method_name=method)
         out["estimate_value"] = float(estimate.value) if estimate.value is not None else None
         out["estimate"] = str(estimate)
+        data_ctx = None
+        if treatment in df.columns and outcome in df.columns:
+            try:
+                data_ctx = {
+                    "treatment_min": float(df[treatment].min()),
+                    "treatment_max": float(df[treatment].max()),
+                    "outcome_min": float(df[outcome].min()),
+                    "outcome_max": float(df[outcome].max()),
+                    "n_rows": len(df),
+                }
+            except Exception:
+                pass
+        out["interpretation"] = _format_effect_interpretation(
+            treatment, outcome, out["estimate_value"], data_context=data_ctx
+        )
         try:
             refute = model.refute_estimate(identified, estimate, method_name="random_common_cause")
             out["refutation"] = str(refute)
@@ -630,6 +926,183 @@ def run_dowhy_effect_estimation(
         return out
 
 
+def _format_effect_interpretation(
+    treatment: str,
+    outcome: str,
+    estimate_value: Optional[float],
+    data_context: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return a plain-language interpretation of the causal effect, with data context when available."""
+    if estimate_value is None:
+        return "No numeric effect was estimated."
+    t, o = treatment.replace("_", " "), outcome.replace("_", " ")
+    val = estimate_value
+    abs_val = abs(val)
+    data_line = ""
+    if data_context:
+        n = data_context.get("n_rows")
+        tx_min = data_context.get("treatment_min")
+        tx_max = data_context.get("treatment_max")
+        o_min = data_context.get("outcome_min")
+        o_max = data_context.get("outcome_max")
+        parts = []
+        if n is not None:
+            parts.append(f"Based on {n} rows in the data")
+        if tx_min is not None and tx_max is not None:
+            parts.append(f"{t!r} ranges from {tx_min:.2g} to {tx_max:.2g}")
+        if o_min is not None and o_max is not None:
+            parts.append(f"{o!r} from {o_min:.2g} to {o_max:.2g}")
+        if parts:
+            data_line = " ".join(parts) + ". "
+    if abs_val < 1e-6:
+        return (
+            f"{data_line}Effect near zero: little or no linear causal effect of {t!r} on {o!r} in this model. "
+            "Changes in the treatment are not associated with systematic changes in the outcome."
+        )
+    if val > 0:
+        return (
+            f"{data_line}Positive effect: an increase in {t!r} tends to increase {o!r}. "
+            f"On average, a one-unit increase in the treatment is associated with an increase of about {abs_val:.4g} units in the outcome."
+        )
+    return (
+        f"{data_line}Negative effect: an increase in {t!r} tends to decrease {o!r}. "
+        f"On average, a one-unit increase in the treatment is associated with a decrease of about {abs_val:.4g} units in the outcome."
+    )
+
+
+def run_dowhy_one_pair(
+    graph_data: Dict[str, Any],
+    treatment: str,
+    outcome: str,
+    method: str = "backdoor.linear_regression",
+) -> Dict[str, Any]:
+    """
+    Run DoWhy causal effect estimation for one (treatment, outcome) pair using
+    graph_data (no store). graph_data must have nodes, edges, data_columns, data_rows.
+    """
+    import pandas as pd
+
+    out = {
+        "success": False,
+        "treatment": treatment,
+        "outcome": outcome,
+        "estimate": None,
+        "estimate_value": None,
+        "interpretation": None,
+        "refutation": None,
+        "error": None,
+    }
+    try:
+        cols = graph_data.get("data_columns")
+        rows = graph_data.get("data_rows")
+        if not cols or rows is None:
+            out["error"] = "No data in graph_data (data_columns / data_rows)"
+            return out
+        df = pd.DataFrame(rows, columns=cols)
+        if treatment not in df.columns:
+            out["error"] = f"Treatment '{treatment}' is not a column in the data"
+            return out
+        if outcome not in df.columns:
+            out["error"] = f"Outcome '{outcome}' is not a column in the data"
+            return out
+
+        import networkx as nx
+        node_id_to_label = {n["id"]: n["label"] for n in graph_data.get("nodes", [])}
+        nx_graph = nx.DiGraph()
+        for e in graph_data.get("edges", []):
+            src = node_id_to_label.get(e["source"], e["source"].replace("node_", "").replace("_", " "))
+            tgt = node_id_to_label.get(e["target"], e["target"].replace("node_", "").replace("_", " "))
+            if src in df.columns and tgt in df.columns:
+                nx_graph.add_edge(src, tgt)
+        for c in df.columns:
+            if c not in nx_graph:
+                nx_graph.add_node(c)
+
+        from dowhy import CausalModel
+        model = CausalModel(data=df, treatment=treatment, outcome=outcome, graph=nx_graph)
+        identified = model.identify_effect()
+        estimate = model.estimate_effect(identified, method_name=method)
+        out["estimate_value"] = float(estimate.value) if estimate.value is not None else None
+        out["estimate"] = str(estimate)
+        data_ctx = None
+        if treatment in df.columns and outcome in df.columns:
+            try:
+                data_ctx = {
+                    "treatment_min": float(df[treatment].min()),
+                    "treatment_max": float(df[treatment].max()),
+                    "outcome_min": float(df[outcome].min()),
+                    "outcome_max": float(df[outcome].max()),
+                    "n_rows": len(df),
+                }
+            except Exception:
+                pass
+        out["interpretation"] = _format_effect_interpretation(
+            treatment, outcome, out["estimate_value"], data_context=data_ctx
+        )
+        try:
+            refute = model.refute_estimate(identified, estimate, method_name="random_common_cause")
+            out["refutation"] = str(refute)
+        except Exception:
+            out["refutation"] = "(refutation skipped)"
+        out["success"] = True
+        return out
+    except Exception as e:
+        out["error"] = str(e)
+        return out
+
+
+def run_dowhy_for_all_edges(
+    graph_data: Dict[str, Any],
+    method: str = "backdoor.linear_regression",
+) -> Dict[str, Any]:
+    """
+    Run DoWhy for each directed edge (treatment, outcome) in the discovered graph.
+    Uses graph_data["dowhy_pairs"] if present, else extracts pairs from graph_data["edges"].
+    Returns {"pairs": [(t,y), ...], "results": {(t,y): {estimate_value, estimate, refutation, ...}}}.
+    """
+    pairs = list(graph_data.get("dowhy_pairs") or [])
+    if not pairs:
+        node_id_to_label = {n["id"]: n["label"] for n in graph_data.get("nodes", [])}
+        for e in graph_data.get("edges", []):
+            src = node_id_to_label.get(e["source"], e["source"].replace("node_", "").replace("_", " "))
+            tgt = node_id_to_label.get(e["target"], e["target"].replace("node_", "").replace("_", " "))
+            if src and tgt and src != tgt:
+                pairs.append((src, tgt))
+    results = {}
+    for (t, y) in pairs:
+        one = run_dowhy_one_pair(graph_data, t, y, method=method)
+        results[(t, y)] = one
+    return {"pairs": pairs, "results": results}
+
+
+def run_direct_lingam(data: Any, var_names: List[str]) -> List[Tuple[str, str]]:
+    """
+    Run DirectLiNGAM on data to get directed edges (optional direction refinement).
+    data: (n_samples, n_vars) array; var_names: list of variable names.
+    Returns list of (cause, effect) as variable names.
+    """
+    try:
+        from causallearn.search.FCMBased.lingam import DirectLiNGAM
+    except ImportError:
+        return []
+    try:
+        model = DirectLiNGAM()
+        model.fit(data)
+        # LiNGAM: x = Bx + e, so B[i,j] = effect of x_j on x_i => edge j -> i
+        B = model.adjacency_matrix_
+        if B is None:
+            return []
+        n = min(B.shape[0], len(var_names))
+        edges = []
+        for i in range(n):
+            for j in range(n):
+                if i != j and B[i, j] != 0:
+                    edges.append((var_names[j], var_names[i]))  # j -> i
+        return edges
+    except Exception:
+        return []
+
+
 def list_data_driven_causal_graph_sources() -> List[str]:
     """List document names that have a stored data-driven causal graph."""
     store = _load_causal_graphs_store()
@@ -637,6 +1110,18 @@ def list_data_driven_causal_graph_sources() -> List[str]:
     if names:
         print(f"📊 Causal graph store: {_get_store_path()} → {len(names)} dataset(s): {names[:5]}{'...' if len(names) > 5 else ''}")
     return names
+
+
+def remove_data_driven_causal_graph(document_name: str) -> bool:
+    """Remove the data-driven causal graph for a document (e.g. when document is deleted). Returns True if removed."""
+    store = _load_causal_graphs_store()
+    graphs = store.get("graphs", {})
+    if document_name in graphs:
+        del graphs[document_name]
+        _save_causal_graphs_store(store)
+        print(f"🧹 Removed causal graph for document: {document_name}")
+        return True
+    return False
 
 
 def clear_data_driven_causal_graphs() -> None:
@@ -648,27 +1133,32 @@ def clear_data_driven_causal_graphs() -> None:
     print(f"🧹 Causal graph store cleared at {path} — only datasets uploaded this session will appear")
 
 
-def get_causal_graph_data(include_inferred: bool = True) -> Dict:
+def get_causal_graph_data(include_inferred: bool = True, source_document_filter: Optional[str] = None) -> Dict:
     """
     Get causal graph data in format suitable for visualization.
-    
+
     Args:
         include_inferred: Whether to include inferred causal relationships
-        
+        source_document_filter: If set, only include relationships from this document (for PDF/DOCX/TXT).
+
     Returns:
-        Dictionary with:
-        - nodes: List of unique entities in causal relationships
-        - edges: List of causal relationships
-        - stats: Statistics about the causal graph
+        Dictionary with nodes, edges, stats.
     """
-    # Extract direct causal relationships
+    # Extract direct causal relationships (predicates that match causal keywords)
     causal_rels = extract_causal_relationships()
-    
-    # Optionally infer additional relationships
+
+    # If no causal predicates matched but the KB has facts, show all relationships as weak causal
+    if len(causal_rels) == 0 and len(graph) > 0:
+        causal_rels = extract_all_relationships_as_weak_causal()
+
+    if source_document_filter:
+        causal_rels = [r for r in causal_rels if r.get("source_document") == source_document_filter]
+
+    # Optionally infer additional relationships (inferred from the filtered causal set)
     inferred_rels = []
-    if include_inferred:
+    if include_inferred and causal_rels:
         inferred_rels = infer_causal_relationships(causal_rels)
-    
+
     all_rels = causal_rels + inferred_rels
     
     # Extract unique nodes

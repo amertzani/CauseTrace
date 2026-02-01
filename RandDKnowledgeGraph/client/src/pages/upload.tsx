@@ -3,7 +3,7 @@ import { FileUploadZone } from "@/components/FileUploadZone";
 import { DocumentList } from "@/components/DocumentList";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { hfApi } from "@/lib/api-client";
+import { hfApi, addUploadedDocNamesSession } from "@/lib/api-client";
 import { useKnowledgeStore } from "@/lib/knowledge-store";
 import type { Document } from "@shared/schema";
 
@@ -88,7 +88,9 @@ export default function UploadPage() {
       console.log(`Uploading ${fileObjects.length} file(s) to backend...`);
       const result = await hfApi.uploadDocuments(fileObjects);
       
-      if (result.success) {
+      // Backend may return 200 with status: "error" on processing failure (so we get a message)
+      const isError = result.success && result.data?.status === "error";
+      if (result.success && !isError) {
         // Parse result to extract CSV-specific information
         const responseData = result.data;
         const fileResults = responseData?.file_results || [];
@@ -141,7 +143,7 @@ export default function UploadPage() {
           })
         );
         
-        // Refresh facts to show newly extracted facts
+        // Refresh facts to show newly extracted facts in knowledge graph
         if (refreshFacts) {
           console.log('🔄 Upload: Refreshing facts after document processing...');
           await refreshFacts();
@@ -149,7 +151,14 @@ export default function UploadPage() {
         } else {
           console.warn('⚠️ Upload: refreshFacts not available');
         }
-        
+
+        // Track uploaded doc names in this session so Dataset dropdown only shows docs uploaded here
+        const uploadedNames = (responseData?.documents || []).map((d: { name?: string }) => d.name).filter(Boolean) as string[];
+        if (uploadedNames.length > 0) addUploadedDocNamesSession(uploadedNames);
+
+        // Notify causal graph / causal-relationships so sources list can refresh and new doc is selectable
+        window.dispatchEvent(new CustomEvent("sources-refresh"));
+
         // Show detailed toast for CSV files
         const csvFiles = pendingDocs.filter(doc => doc.type === 'csv');
         if (csvFiles.length > 0) {
@@ -175,15 +184,17 @@ export default function UploadPage() {
           });
         }
       } else {
-        // Mark as failed
+        // Mark as failed (network/500 or backend returned status: "error")
         setDocuments((prev) =>
           prev.map((doc) =>
             doc.status === "processing" ? { ...doc, status: "pending" as const } : doc
           )
         );
+        const errorMessage =
+          (result.success && result.data?.error) || result.error || "Failed to process documents";
         toast({
           title: "Processing failed",
-          description: result.error || "Failed to process documents",
+          description: errorMessage,
           variant: "destructive",
         });
       }

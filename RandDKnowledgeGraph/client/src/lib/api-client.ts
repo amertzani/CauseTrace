@@ -16,6 +16,30 @@ const USE_LOCAL_BACKEND = true;
 const USE_LOCAL_STORAGE = false; // Fallback to local storage if backend fails
 const USE_BACKEND_PROXY = false; // Don't use Replit proxy - connect directly
 
+/** Session storage key for document names uploaded in this tab/session. Used so Dataset dropdown only shows docs uploaded this session. */
+export const UPLOADED_DOCS_SESSION_KEY = "cause_trace_uploaded_docs";
+
+export function getUploadedDocNamesSession(): string[] {
+  try {
+    const raw = sessionStorage.getItem(UPLOADED_DOCS_SESSION_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+export function addUploadedDocNamesSession(names: string[]): void {
+  const current = getUploadedDocNamesSession();
+  const set = new Set([...current, ...names.filter(Boolean)]);
+  sessionStorage.setItem(UPLOADED_DOCS_SESSION_KEY, JSON.stringify([...set]));
+}
+
+export function clearUploadedDocNamesSession(): void {
+  sessionStorage.removeItem(UPLOADED_DOCS_SESSION_KEY);
+}
+
 interface ApiResponse<T> {
   success: boolean;
   data?: T;
@@ -437,10 +461,10 @@ class HuggingFaceApiClient {
     return { success: false, error: "Causal graph requires local backend" };
   }
 
-  // Causal Graph - Get causal relationships (from KB or dataset)
+  // Causal Graph - Get causal relationships (kb only, one dataset, data only, or both)
   async getCausalGraph(
     includeInferred: boolean = true,
-    source: "kb" | "dataset" = "kb",
+    source: "kb" | "dataset" | "data_only" | "both" = "kb",
     documentName?: string
   ): Promise<ApiResponse<any>> {
     if (USE_LOCAL_BACKEND) {
@@ -448,7 +472,7 @@ class HuggingFaceApiClient {
         include_inferred: includeInferred.toString(),
         source,
       });
-      if (source === "dataset" && documentName) {
+      if (documentName) {
         params.set("document_name", documentName);
       }
       const response = await this.request(`/api/knowledge/causal-graph?${params.toString()}`, {
@@ -468,7 +492,7 @@ class HuggingFaceApiClient {
     treatment: string,
     outcome: string,
     method?: string
-  ): Promise<ApiResponse<{ estimate_value: number | null; estimate: string; refutation: string }>> {
+  ): Promise<ApiResponse<{ estimate_value: number | null; interpretation: string | null; estimate: string; refutation: string }>> {
     if (USE_LOCAL_BACKEND) {
       const response = await this.request("/api/knowledge/causal-graph/dowhy", {
         method: "POST",
@@ -628,6 +652,41 @@ class HuggingFaceApiClient {
     }
     // Fallback for other modes
     return this.request("/api/documents", { method: "GET" });
+  }
+
+  /** Dashboard stats for home page (documents, facts, nodes, connections). Returns 0s when empty. */
+  async getDashboardStats(): Promise<
+    ApiResponse<{
+      documents_count: number;
+      facts_count: number;
+      nodes_count: number;
+      connections_count: number;
+    }>
+  > {
+    if (USE_LOCAL_BACKEND) {
+      const response = await this.request("/api/dashboard/stats", { method: "GET" });
+      if (response.success && response.data) {
+        return {
+          success: true,
+          data: {
+            documents_count: response.data.documents_count ?? 0,
+            facts_count: response.data.facts_count ?? 0,
+            nodes_count: response.data.nodes_count ?? 0,
+            connections_count: response.data.connections_count ?? 0,
+          },
+        };
+      }
+      return response;
+    }
+    return {
+      success: true,
+      data: {
+        documents_count: 0,
+        facts_count: 0,
+        nodes_count: 0,
+        connections_count: 0,
+      },
+    };
   }
 
   async deleteDocument(documentId: string): Promise<ApiResponse<any>> {

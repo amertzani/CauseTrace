@@ -259,6 +259,9 @@ def handle_file_upload(files, original_filenames=None):
     
     results = []
     new_processed = []
+    # Only skip duplicates within this batch (same request). Re-uploading the same
+    # filename in a new request should always be processed (e.g. after reset or to refresh).
+    seen_in_this_batch = set()
     
     for file in files:
         if file is None:
@@ -273,10 +276,11 @@ def handle_file_upload(files, original_filenames=None):
                 file_path = file.name if hasattr(file, 'name') else str(file)
                 file_name = original_filenames.get(file_path, os.path.basename(file_path))
             
-            # Check if already processed
-            if any(f['name'] == file_name for f in processed_files):
-                results.append(f"SKIP: {file_name} - Already processed, skipping")
+            # Skip only if same filename appears twice in this upload (duplicate in batch)
+            if file_name in seen_in_this_batch:
+                results.append(f"SKIP: {file_name} - Duplicate in this upload, skipping")
                 continue
+            seen_in_this_batch.add(file_name)
             
             # Process file
             result = process_uploaded_file(file, original_filename=file_name)
@@ -333,7 +337,7 @@ def handle_file_upload(files, original_filenames=None):
     summary = f"**Upload Summary:**\n"
     summary += f"• Total files: {total_files}\n"
     summary += f"• Successfully processed: {successful}\n"
-    summary += f"• Already processed: {skipped}\n"
+    summary += f"• Skipped (duplicates in batch): {skipped}\n"
     summary += f"• Failed: {failed}\n\n"
     
     # Add supported formats info

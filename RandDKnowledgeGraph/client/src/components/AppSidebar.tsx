@@ -9,6 +9,7 @@ import {
   Settings,
   FlaskConical,
   GitBranch,
+  List,
   RotateCcw,
 } from "lucide-react";
 import {
@@ -55,6 +56,16 @@ const menuItems = [
     icon: Network,
   },
   {
+    title: "Causal Graph",
+    url: "/causal-graph",
+    icon: GitBranch,
+  },
+  {
+    title: "Causal Relationships",
+    url: "/causal-relationships",
+    icon: List,
+  },
+  {
     title: "Research Assistant",
     url: "/chat",
     icon: MessageSquare,
@@ -68,11 +79,6 @@ const menuItems = [
     title: "Simulator",
     url: "/simulator",
     icon: FlaskConical,
-  },
-  {
-    title: "Causal Graph",
-    url: "/causal-graph",
-    icon: GitBranch,
   },
 ];
 
@@ -95,6 +101,8 @@ export function AppSidebar() {
     try {
       const result = await hfApi.resetAll();
       if (result.success) {
+        const { clearUploadedDocNamesSession } = await import("@/lib/api-client");
+        clearUploadedDocNamesSession();
         toast({
           title: "App reset",
           description: "All documents, knowledge base, and knowledge graph have been erased.",

@@ -16,6 +16,7 @@ import DocumentsPage from "@/pages/documents";
 import ImportExportPage from "@/pages/import-export";
 import SimulatorPage from "@/pages/simulator";
 import CausalGraphPage from "@/pages/causal-graph";
+import CausalRelationshipsPage from "@/pages/causal-relationships";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -30,6 +31,7 @@ function Router() {
       <Route path="/import-export" component={ImportExportPage} />
       <Route path="/simulator" component={SimulatorPage} />
       <Route path="/causal-graph" component={CausalGraphPage} />
+      <Route path="/causal-relationships" component={CausalRelationshipsPage} />
       <Route component={NotFound} />
     </Switch>
   );

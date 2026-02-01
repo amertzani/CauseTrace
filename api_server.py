@@ -148,6 +148,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+def _is_test_document(name: str) -> bool:
+    """Return True if document name indicates test/demo data to hide from the UI."""
+    if not name or not isinstance(name, str):
+        return False
+    n = name.lower()
+    return any(
+        p in n for p in ("test_upload", "upload_test", "test_dataset", "test.csv")
+    )
+
 # ==========================================================
 # Request/Response Models
 # ==========================================================
@@ -412,34 +422,55 @@ async def triplex_status_endpoint():
         raise HTTPException(status_code=500, detail=f"Error getting Triplex status: {str(e)}")
 
 @app.post("/api/knowledge/upload")
-async def upload_file_endpoint(files: List[UploadFile] = File(..., description="Files to upload (use form field name 'files')")):
-    """Upload and process files (PDF, DOCX, TXT, CSV)"""
+async def upload_file_endpoint(files: List[UploadFile] = File(..., description="Files to upload"),):
+    """Upload and process files (PDF, DOCX, TXT, CSV). Frontend must send multipart form with field name 'files'."""
     if not files:
         raise HTTPException(status_code=400, detail="No files provided. Send multipart form with field 'files'.")
     tmp_paths = []  # Initialize outside try block so finally can access it
+    file_info_list = []
+    temp_to_original = {}
+
     try:
         facts_before = len(kb_graph)
-        file_info_list = []
-        
-        # Map temporary file paths to original filenames
-        temp_to_original = {}
-        
+
         for file in files:
-            # Save uploaded file temporarily
-            suffix = os.path.splitext(file.filename)[1] if file.filename else ""
-            original_filename = file.filename or 'unknown'
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+            original_filename = file.filename or "unknown"
+            try:
+                suffix = os.path.splitext(file.filename)[1] if file.filename else ""
                 content = await file.read()
-                tmp_file.write(content)
-                tmp_path = tmp_file.name
-                tmp_paths.append(tmp_path)
-                temp_to_original[tmp_path] = original_filename
-                file_info_list.append({
-                    'name': original_filename,
-                    'size': len(content),
-                    'type': suffix.lstrip('.') or 'unknown'
-                })
-        
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+                    tmp_file.write(content)
+                    tmp_path = tmp_file.name
+                    tmp_paths.append(tmp_path)
+                    temp_to_original[tmp_path] = original_filename
+                    file_info_list.append({
+                        "name": original_filename,
+                        "size": len(content),
+                        "type": (suffix.lstrip(".") or "unknown").lower(),
+                    })
+            except Exception as e:
+                print(f"❌ Error reading uploaded file {original_filename}: {e}")
+                import traceback
+                traceback.print_exc()
+                return {
+                    "message": f"Failed to read file {original_filename}: {str(e)}",
+                    "status": "error",
+                    "error": str(e),
+                    "files_processed": 0,
+                    "documents": [],
+                    "file_results": [],
+                }
+
+        if not tmp_paths or not file_info_list:
+            return {
+                "message": "No files could be read. Check file size and connection.",
+                "status": "error",
+                "error": "No files could be read",
+                "files_processed": 0,
+                "documents": [],
+                "file_results": [],
+            }
+
         try:
             # Process all files in a thread so the event loop stays responsive
             # (handle_file_upload / add_to_graph can be slow for large files)
@@ -447,13 +478,14 @@ async def upload_file_endpoint(files: List[UploadFile] = File(..., description="
                 fp_handle_file_upload, tmp_paths, original_filenames=temp_to_original
             )
             
-            # Handle both string (legacy) and dict (new) return formats
-            if isinstance(upload_result, dict):
-                result = upload_result.get('summary', '')
-                file_results = upload_result.get('file_results', [])
-            else:
-                result = upload_result
-                file_results = []
+            # Normalize: ensure we always have a dict so downstream code never sees None
+            if upload_result is None:
+                upload_result = {"summary": "No result from processing.", "file_results": []}
+            if not isinstance(upload_result, dict):
+                upload_result = {"summary": str(upload_result), "file_results": []}
+            
+            result = upload_result.get("summary") or ""
+            file_results = upload_result.get("file_results") or []
             
             # Data-driven causal discovery for CSV files (causal-learn)
             for tmp_path in tmp_paths:
@@ -502,8 +534,9 @@ async def upload_file_endpoint(files: List[UploadFile] = File(..., description="
             
             # Parse result message to extract added/skipped counts and extraction method
             import re
-            added_match = re.search(r'Added (\d+) new triples', result)
-            skipped_match = re.search(r'skipped (\d+) duplicates', result)
+            result_str = result if isinstance(result, str) else (str(result) if result else "")
+            added_match = re.search(r'Added (\d+) new triples', result_str)
+            skipped_match = re.search(r'skipped (\d+) duplicates', result_str)
             added_count = int(added_match.group(1)) if added_match else facts_extracted
             skipped_count = int(skipped_match.group(1)) if skipped_match else 0
             
@@ -543,8 +576,9 @@ async def upload_file_endpoint(files: List[UploadFile] = File(..., description="
                 # Count facts that have this document as source
                 facts_for_this_doc = count_facts_for_document(document_name)
                 
-                # Save document if it has facts
-                if facts_for_this_doc > 0:
+                # Save document if it has facts, or if CSV (so it appears in uploaded docs and causal graph)
+                is_csv = (file_info.get('type') or '').lower() == 'csv'
+                if facts_for_this_doc > 0 or is_csv:
                     doc = add_document(
                         name=document_name,
                         size=file_info['size'],
@@ -553,7 +587,10 @@ async def upload_file_endpoint(files: List[UploadFile] = File(..., description="
                     )
                     if doc:
                         processed_docs.append(doc)
-                        print(f"✅ Saved document {document_name} with {facts_for_this_doc} facts")
+                        if facts_for_this_doc > 0:
+                            print(f"✅ Saved document {document_name} with {facts_for_this_doc} facts")
+                        else:
+                            print(f"✅ Saved CSV document {document_name} (0 facts; available for causal graph)")
                 else:
                     print(f"⚠️  Document {document_name} has 0 facts - not saved")
             
@@ -619,7 +656,15 @@ async def upload_file_endpoint(files: List[UploadFile] = File(..., description="
         print(f"❌ Error uploading files: {error_msg}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Error uploading files: {error_msg}")
+        # Return 200 with status: "error" so frontend can show the message (no 500)
+        return {
+            "message": f"Error processing upload: {error_msg}",
+            "status": "error",
+            "error": error_msg,
+            "files_processed": len(file_info_list) if file_info_list else 0,
+            "documents": [],
+            "file_results": [],
+        }
 
 @app.post("/api/process")
 async def process_documents_endpoint(request: Dict[str, Any]):
@@ -683,22 +728,83 @@ async def get_graph_endpoint():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting graph: {str(e)}")
 
+def _merge_causal_graphs(sources: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Merge multiple causal graph payloads (each with nodes, edges, stats) into one. Prefix ids to avoid collisions."""
+    all_nodes = []
+    all_edges = []
+    node_id_map = {}  # (source_key, old_id) -> new_id
+    edge_idx = 0
+    for source_key, data in sources:
+        nodes = data.get("nodes", [])
+        edges = data.get("edges", [])
+        prefix = f"{source_key}_"
+        for n in nodes:
+            old_id = n.get("id", "")
+            new_id = f"{prefix}{old_id}" if old_id else f"{prefix}node_{len(all_nodes)}"
+            node_id_map[(source_key, old_id)] = new_id
+            all_nodes.append({**n, "id": new_id, "source_origin": source_key})
+        for e in edges:
+            src = e.get("source", "")
+            tgt = e.get("target", "")
+            new_src = node_id_map.get((source_key, src), f"{prefix}{src}")
+            new_tgt = node_id_map.get((source_key, tgt), f"{prefix}{tgt}")
+            all_edges.append({
+                **e,
+                "id": f"edge_{edge_idx}",
+                "source": new_src,
+                "target": new_tgt,
+                "source_origin": source_key,
+            })
+            edge_idx += 1
+    return {
+        "nodes": all_nodes,
+        "edges": all_edges,
+        "stats": {
+            "total_nodes": len(all_nodes),
+            "total_edges": len(all_edges),
+            "direct_relationships": len(all_edges),
+            "inferred_relationships": 0,
+            "most_causal_entities": [],
+        },
+    }
+
+
 @app.get("/api/knowledge/causal-graph")
 async def get_causal_graph_endpoint(
     include_inferred: bool = Query(True, description="Include inferred causal relationships"),
-    source: Optional[str] = Query("kb", description="Source: 'kb' (knowledge base) or 'dataset'"),
+    source: Optional[str] = Query("kb", description="Source: 'kb', 'dataset', 'data_only' (all datasets), or 'both' (KB + all datasets)"),
     document_name: Optional[str] = Query(None, description="Document name for source=dataset"),
 ):
-    """Get causal graph: from knowledge base (default) or data-driven from a CSV dataset"""
+    """Get causal graph: from knowledge base, one dataset, all data only, or both KB + all datasets."""
     try:
+        from causal_graph import get_causal_graph_data, get_data_driven_causal_graph
         if source == "dataset" and document_name:
-            from causal_graph import get_data_driven_causal_graph
-            causal_data = get_data_driven_causal_graph(document_name)
-            if not causal_data:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No data-driven causal graph found for document: {document_name}",
-                )
+            # Resolve by document type: CSV/XLSX → data-driven graph; PDF/DOCX/TXT → KB filtered by source document
+            all_docs = get_all_documents()
+            doc = next((d for d in all_docs if d.get("name") == document_name), None)
+            doc_type = (doc.get("type") or "").lower() if doc else ""
+            if doc_type in ("csv", "xlsx"):
+                causal_data = get_data_driven_causal_graph(document_name)
+                if not causal_data:
+                    return {
+                        "nodes": [],
+                        "edges": [],
+                        "stats": {"total_nodes": 0, "total_edges": 0, "direct_relationships": 0, "inferred_relationships": 0, "most_causal_entities": []},
+                        "status": "success",
+                        "source": "dataset",
+                        "document_name": document_name,
+                        "empty_reason": "No causal graph for this dataset. Re-upload the file to run discovery.",
+                    }
+                return {
+                    "nodes": causal_data.get("nodes", []),
+                    "edges": causal_data.get("edges", []),
+                    "stats": causal_data.get("stats", {}),
+                    "status": "success",
+                    "source": "dataset",
+                    "document_name": document_name,
+                }
+            # PDF, DOCX, TXT, or other: use KB causal graph filtered by this document
+            causal_data = get_causal_graph_data(include_inferred=include_inferred, source_document_filter=document_name)
             return {
                 "nodes": causal_data.get("nodes", []),
                 "edges": causal_data.get("edges", []),
@@ -707,9 +813,76 @@ async def get_causal_graph_endpoint(
                 "source": "dataset",
                 "document_name": document_name,
             }
-        # Default: from knowledge base
-        from causal_graph import get_causal_graph_data
-        print(f"📊 Causal graph requested (include_inferred={include_inferred})")
+        if source == "data_only":
+            # Use same CSV list as sources endpoint (from documents_store); exclude test data
+            all_docs = get_all_documents()
+            datasets = [
+                doc["name"] for doc in all_docs
+                if (doc.get("type") or "").lower() == "csv" and not _is_test_document(doc.get("name", ""))
+            ]
+            to_merge = []
+            for doc_name in datasets:
+                g = get_data_driven_causal_graph(doc_name)
+                if g and (g.get("nodes") or g.get("edges")):
+                    to_merge.append((doc_name, g))
+            if not to_merge:
+                return {
+                    "nodes": [],
+                    "edges": [],
+                    "stats": {"total_nodes": 0, "total_edges": 0, "direct_relationships": 0, "inferred_relationships": 0, "most_causal_entities": []},
+                    "status": "success",
+                    "source": "data_only",
+                }
+            merged = _merge_causal_graphs(to_merge)
+            return {**merged, "status": "success", "source": "data_only"}
+        if source == "both":
+            kb_data = get_causal_graph_data(include_inferred=include_inferred)
+            all_docs = get_all_documents()
+            if document_name:
+                # Both + one dataset: KB merged with that dataset only
+                doc = next((d for d in all_docs if d.get("name") == document_name), None)
+                doc_type = (doc.get("type") or "").lower() if doc else ""
+                if doc_type in ("csv", "xlsx"):
+                    g = get_data_driven_causal_graph(document_name)
+                    if g and (g.get("nodes") or g.get("edges")):
+                        merged = _merge_causal_graphs([("kb", kb_data), (document_name, g)])
+                        return {**merged, "status": "success", "source": "both", "document_name": document_name}
+                # Non-CSV: KB filtered by document
+                causal_data = get_causal_graph_data(include_inferred=include_inferred, source_document_filter=document_name)
+                return {
+                    "nodes": causal_data["nodes"],
+                    "edges": causal_data["edges"],
+                    "stats": causal_data["stats"],
+                    "status": "success",
+                    "source": "both",
+                    "document_name": document_name,
+                }
+            datasets = [
+                doc["name"] for doc in all_docs
+                if (doc.get("type") or "").lower() == "csv" and not _is_test_document(doc.get("name", ""))
+            ]
+            to_merge = [("kb", kb_data)]
+            for doc_name in datasets:
+                g = get_data_driven_causal_graph(doc_name)
+                if g and (g.get("nodes") or g.get("edges")):
+                    to_merge.append((doc_name, g))
+            merged = _merge_causal_graphs(to_merge)
+            return {**merged, "status": "success", "source": "both"}
+        # source == "kb": optional document_name filters KB to that document only
+        if source == "kb" and document_name:
+            print(f"📊 Causal graph requested (include_inferred={include_inferred}, source=kb, document_name={document_name})")
+            causal_data = get_causal_graph_data(include_inferred=include_inferred, source_document_filter=document_name)
+            print(f"✅ Causal graph generated: {len(causal_data['nodes'])} nodes, {len(causal_data['edges'])} edges")
+            return {
+                "nodes": causal_data["nodes"],
+                "edges": causal_data["edges"],
+                "stats": causal_data["stats"],
+                "status": "success",
+                "source": "kb",
+                "document_name": document_name,
+            }
+        # Default: from knowledge base only (all)
+        print(f"📊 Causal graph requested (include_inferred={include_inferred}, source=kb)")
         causal_data = get_causal_graph_data(include_inferred=include_inferred)
         print(f"✅ Causal graph generated: {len(causal_data['nodes'])} nodes, {len(causal_data['edges'])} edges")
         return {
@@ -733,15 +906,20 @@ async def get_causal_graph_endpoint(
 
 @app.get("/api/knowledge/causal-graph/sources")
 async def get_causal_graph_sources_endpoint():
-    """List available causal graph sources: KB + document names with data-driven graphs"""
+    """List available causal graph sources: KB + uploaded documents only (same as GET /api/documents). Test data excluded."""
     try:
-        from causal_graph import list_data_driven_causal_graph_sources
-        data_driven = list_data_driven_causal_graph_sources()
+        all_docs = get_all_documents()
+        # Only include documents that are "uploaded" and shown on Documents page: have facts or are CSV
+        docs_uploaded = [
+            doc for doc in all_docs
+            if not _is_test_document(doc.get("name", ""))
+            and (doc.get("facts_extracted", 0) > 0 or (doc.get("type") or "").lower() == "csv")
+        ]
         sources = [
             {"id": "kb", "label": "Causal graph from knowledge base", "type": "kb"},
-            *[{"id": name, "label": f"Dataset: {name}", "type": "dataset"} for name in data_driven],
+            *[{"id": doc["name"], "label": f"Dataset: {doc['name']}", "type": "dataset"} for doc in docs_uploaded],
         ]
-        print(f"✅ Causal graph sources: {len(sources)} total ({len(data_driven)} dataset(s))")
+        print(f"✅ Causal graph sources: {len(sources)} total ({len(docs_uploaded)} uploaded document(s))")
         return {"sources": sources, "status": "success"}
     except Exception as e:
         import traceback
@@ -762,11 +940,7 @@ async def export_causal_graph_endpoint(
     """Export causal graph(s) as JSON: KB only, all sources (KB + datasets), or one dataset."""
     try:
         from datetime import datetime
-        from causal_graph import (
-            get_causal_graph_data,
-            list_data_driven_causal_graph_sources,
-            get_data_driven_causal_graph,
-        )
+        from causal_graph import get_causal_graph_data, get_data_driven_causal_graph
         exported_at = datetime.now().isoformat()
 
         if source == "kb":
@@ -808,9 +982,10 @@ async def export_causal_graph_endpoint(
             print(f"✅ GET /api/knowledge/causal-graph/export: dataset {document_name} — {len(export_data['nodes'])} nodes, {len(export_data['edges'])} edges")
             return export_data
 
-        # source == "all": KB + all data-driven datasets
+        # source == "all": KB + all CSV datasets from documents store
         kb_data = get_causal_graph_data(include_inferred=include_inferred)
-        datasets = list_data_driven_causal_graph_sources()
+        all_docs = get_all_documents()
+        datasets = [doc["name"] for doc in all_docs if (doc.get("type") or "").lower() == "csv"]
         export_data = {
             "metadata": {
                 "version": "1.0",
@@ -878,6 +1053,7 @@ async def dowhy_effect_estimation_endpoint(body: DoWhyEffectRequest):
             "treatment": result["treatment"],
             "outcome": result["outcome"],
             "estimate_value": result.get("estimate_value"),
+            "interpretation": result.get("interpretation"),
             "estimate": result.get("estimate"),
             "refutation": result.get("refutation"),
         }
@@ -1167,14 +1343,17 @@ async def get_documents_endpoint(include_all: bool = False):
             save_documents(updated_docs)
             all_documents = updated_docs
         
-        # Filter: ONLY return documents that have contributed facts (facts_extracted > 0)
-        # This ensures we NEVER show documents without facts
+        # Filter: return documents that have facts, or CSV (so uploaded CSVs appear for causal graph)
         if not include_all:
-            documents = [doc for doc in all_documents if doc.get('facts_extracted', 0) > 0]
-            print(f"✅ GET /api/documents: Returning {len(documents)} documents with facts (out of {len(all_documents)} total)")
+            documents = [
+                doc for doc in all_documents
+                if doc.get('facts_extracted', 0) > 0 or (doc.get('type') or '').lower() == 'csv'
+            ]
         else:
             documents = all_documents
-            print(f"✅ GET /api/documents: Returning {len(documents)} documents (all)")
+        # Exclude test/demo documents from the UI
+        documents = [doc for doc in documents if not _is_test_document(doc.get("name", ""))]
+        print(f"✅ GET /api/documents: Returning {len(documents)} documents (out of {len(all_documents)} total)")
         
         return {
             "documents": documents,
@@ -1190,10 +1369,21 @@ async def get_documents_endpoint(include_all: bool = False):
 
 @app.delete("/api/documents/{document_id}")
 async def delete_document_endpoint(document_id: str):
-    """Delete a document by ID"""
+    """Delete a document by ID and remove its data-driven causal graph if any."""
     try:
+        # Get document name before deleting so we can remove its causal graph
+        all_docs = get_all_documents()
+        doc = next((d for d in all_docs if d.get("id") == document_id), None)
+        doc_name = doc.get("name") if doc else None
+
         success = ds_delete_document(document_id)
         if success:
+            if doc_name:
+                try:
+                    from causal_graph import remove_data_driven_causal_graph
+                    remove_data_driven_causal_graph(doc_name)
+                except Exception as e:
+                    print(f"⚠️  Could not remove causal graph for {doc_name}: {e}")
             return {
                 "message": "Document deleted successfully",
                 "status": "success"
@@ -1466,6 +1656,35 @@ async def get_stats_endpoint():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting stats: {str(e)}")
+
+
+@app.get("/api/dashboard/stats")
+async def get_dashboard_stats_endpoint():
+    """Get dashboard stats: documents, facts, graph nodes, connections (for home page). Test data excluded."""
+    try:
+        docs = get_all_documents()
+        docs = [d for d in docs if not _is_test_document(d.get("name", ""))]
+        total_documents = len(docs)
+        total_facts = len(kb_graph)
+        # Unique nodes = unique subjects + objects in the graph
+        nodes_set = set()
+        for s, p, o in kb_graph:
+            subj = str(s).split(":")[-1] if ":" in str(s) else str(s)
+            obj = str(o).split(":")[-1] if ":" in str(o) else str(o)
+            nodes_set.add(subj)
+            nodes_set.add(obj)
+        total_nodes = len(nodes_set)
+        # Connections = edges = facts (each triple is one connection)
+        total_connections = total_facts
+        return {
+            "documents_count": total_documents,
+            "facts_count": total_facts,
+            "nodes_count": total_nodes,
+            "connections_count": total_connections,
+            "status": "success",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting dashboard stats: {str(e)}")
 
 @app.post("/api/knowledge/save")
 async def save_knowledge_endpoint():
@@ -1788,14 +2007,20 @@ async def delete_experiment_endpoint(experiment_id: str):
 @app.post("/api/reset")
 async def reset_endpoint():
     """
-    Reset the app: erase all documents, knowledge base, and knowledge graph.
-    Equivalent to restarting the app with a clean state.
+    Reset the app: erase all documents, knowledge base, causal graph store, and persist empty state.
+    Use this to clear concrete_data and any other persisted data without restarting the backend.
     """
     try:
         docs_deleted = ds_delete_all_documents()
         kb_result = kb_delete_all_knowledge()
+        kb_save_knowledge_graph()
+        try:
+            from causal_graph import clear_data_driven_causal_graphs
+            clear_data_driven_causal_graphs()
+        except Exception as e:
+            print(f"⚠️  Could not clear causal graph store: {e}")
         return {
-            "message": "App reset successfully. All documents, knowledge base, and knowledge graph have been erased.",
+            "message": "App reset successfully. All documents, knowledge base, and causal graphs have been erased.",
             "status": "success",
             "documents_deleted": docs_deleted,
         }

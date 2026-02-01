@@ -62,14 +62,14 @@ def save_documents(documents: List[Dict]):
 def add_document(name: str, size: int, file_type: str, facts_extracted: int = 0) -> Dict:
     """
     Add a new document to storage.
-    IMPORTANT: Only saves documents with facts_extracted > 0.
-    Documents with 0 facts are NEVER saved.
+    Saves documents with facts_extracted > 0. CSV files are also saved when
+    facts_extracted == 0 so they appear in uploaded docs and causal graph sources.
     """
-    # NEVER save documents with 0 facts
-    if facts_extracted <= 0:
+    # Save if has facts, or if CSV (so causal graph can list and show the dataset)
+    if facts_extracted <= 0 and (not file_type or file_type.lower() != "csv"):
         print(f"⚠️  Skipping document {name}: has 0 facts (not saved)")
         return None
-    
+
     documents = load_documents()
     
     # Check if document already exists
