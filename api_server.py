@@ -1184,6 +1184,25 @@ async def save_knowledge_endpoint():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error saving knowledge: {str(e)}")
 
+
+@app.post("/api/reset")
+async def reset_endpoint():
+    """
+    Reset the app: erase all documents, knowledge base, and knowledge graph.
+    Equivalent to restarting the app with a clean state.
+    """
+    try:
+        docs_deleted = ds_delete_all_documents()
+        kb_result = kb_delete_all_knowledge()
+        return {
+            "message": "App reset successfully. All documents, knowledge base, and knowledge graph have been erased.",
+            "status": "success",
+            "documents_deleted": docs_deleted,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error resetting app: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
     

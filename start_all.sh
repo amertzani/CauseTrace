@@ -18,25 +18,26 @@ if [[ "$OSTYPE" != "darwin"* ]]; then
     echo "   On other systems, you may need to start servers manually"
 fi
 
-# Function to check if a port is in use
-check_port() {
-    lsof -Pi :$1 -sTCP:LISTEN -t >/dev/null 2>&1
-    return $?
-}
-
-# Check if ports are available
+# Ports (use env vars if set)
 BACKEND_PORT=${API_PORT:-8001}
 FRONTEND_PORT=${PORT:-5006}
 
-if check_port $BACKEND_PORT; then
-    echo "⚠️  Port $BACKEND_PORT is already in use (backend)"
-    echo "   Set API_PORT environment variable to use a different port"
-fi
+# Clean ports so nothing is left from previous runs
+clean_port() {
+    local port=$1
+    local pids
+    pids=$(lsof -ti :$port -sTCP:LISTEN 2>/dev/null) || true
+    if [ -n "$pids" ]; then
+        echo "🧹 Killing process(es) on port $port: $pids"
+        echo "$pids" | xargs kill -9 2>/dev/null || true
+        sleep 1
+    fi
+}
 
-if check_port $FRONTEND_PORT; then
-    echo "⚠️  Port $FRONTEND_PORT is already in use (frontend)"
-    echo "   Set PORT environment variable to use a different port"
-fi
+echo "🧹 Cleaning ports ${BACKEND_PORT} and ${FRONTEND_PORT}..."
+clean_port $BACKEND_PORT
+clean_port $FRONTEND_PORT
+echo ""
 
 # Start backend in a new terminal window (macOS)
 echo "🔧 Starting backend server..."

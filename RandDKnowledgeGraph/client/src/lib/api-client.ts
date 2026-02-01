@@ -549,6 +549,11 @@ class HuggingFaceApiClient {
       method: "DELETE",
     });
   }
+
+  /** Reset app: erase all documents, knowledge base, and knowledge graph */
+  async resetAll(): Promise<ApiResponse<any>> {
+    return this.request("/api/reset", { method: "POST" });
+  }
 }
 
 // Export singleton instance

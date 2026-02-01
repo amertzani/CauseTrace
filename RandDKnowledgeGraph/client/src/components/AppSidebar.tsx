@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   Database,
   Upload,
@@ -6,6 +7,7 @@ import {
   FileText,
   Download,
   Settings,
+  RotateCcw,
 } from "lucide-react";
 import {
   Sidebar,
@@ -19,7 +21,19 @@ import {
   SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useLocation } from "wouter";
+import { useToast } from "@/hooks/use-toast";
+import { hfApi } from "@/lib/api-client";
 import logoC from "@/assets/logo_C.jpeg";
 
 const menuItems = [
@@ -60,6 +74,38 @@ const managementItems = [
 
 export function AppSidebar() {
   const [location] = useLocation();
+  const { toast } = useToast();
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
+
+  const handleReset = async () => {
+    setResetLoading(true);
+    try {
+      const result = await hfApi.resetAll();
+      if (result.success) {
+        toast({
+          title: "App reset",
+          description: "All documents, knowledge base, and knowledge graph have been erased.",
+        });
+        setResetOpen(false);
+        window.location.reload();
+      } else {
+        toast({
+          title: "Reset failed",
+          description: result.error || "Could not reset the app.",
+          variant: "destructive",
+        });
+      }
+    } catch (err) {
+      toast({
+        title: "Reset failed",
+        description: err instanceof Error ? err.message : "Could not connect to backend.",
+        variant: "destructive",
+      });
+    } finally {
+      setResetLoading(false);
+    }
+  };
 
   return (
     <Sidebar>
@@ -110,6 +156,40 @@ export function AppSidebar() {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
+              <SidebarMenuItem>
+                <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
+                  <SidebarMenuButton
+                    onClick={() => setResetOpen(true)}
+                    className="text-destructive focus:text-destructive"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    <span>Reset app</span>
+                  </SidebarMenuButton>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Reset app?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This will permanently erase all documents, the knowledge base, and the
+                        knowledge graph. The app will reload as if just started. This cannot be
+                        undone.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel disabled={resetLoading}>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={(e) => {
+                          e.preventDefault();
+                          handleReset();
+                        }}
+                        disabled={resetLoading}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      >
+                        {resetLoading ? "Resetting…" : "Reset"}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
