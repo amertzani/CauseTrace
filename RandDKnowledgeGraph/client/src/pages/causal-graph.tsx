@@ -109,6 +109,8 @@ export default function CausalGraphPage() {
           label: edge.label,
           details: edge.details,
           isInferred: edge.is_inferred || false,
+          confidence: edge.confidence,
+          effectEstimate: edge.effect_estimate ?? edge.effectEstimate,
         }));
 
         setNodes(graphNodes);
@@ -239,11 +241,8 @@ export default function CausalGraphPage() {
     });
   };
 
-  const handleNodeMove = (nodeId: string, position: { x: number; y: number; z: number }) => {
-    // Allow node positioning for better visualization
-    setNodes(prev => prev.map(n => 
-      n.id === nodeId ? { ...n } : n
-    ));
+  const handleNodeMove = () => {
+    // No-op: avoid resetting positions by reinitializing the simulation.
   };
 
   const handleEdgeEdit = (edge: GraphEdge) => {
@@ -309,13 +308,15 @@ export default function CausalGraphPage() {
               </RadioGroup>
             </div>
             <div className="flex items-center gap-2">
-              <Label htmlFor="dataset-source" className="text-sm text-muted-foreground">Dataset</Label>
+              <Label htmlFor="dataset-source" className="text-sm text-muted-foreground">
+                Dataset{sourceMode === "both" ? " (pick one to combine with KB)" : ""}
+              </Label>
               <Select value={selectedDataset} onValueChange={setSelectedDataset}>
                 <SelectTrigger id="dataset-source" className="w-[200px]">
                   <SelectValue placeholder="Dataset" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All datasets</SelectItem>
+                  <SelectItem value="all">{sourceMode === "both" ? "KB only (no dataset)" : "All datasets"}</SelectItem>
                   {sources
                     .filter((s) => s.type === "dataset" && getUploadedDocNamesSession().includes(s.id))
                     .map((s) => (

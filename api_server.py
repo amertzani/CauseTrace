@@ -839,7 +839,7 @@ async def get_causal_graph_endpoint(
             kb_data = get_causal_graph_data(include_inferred=include_inferred)
             all_docs = get_all_documents()
             if document_name:
-                # Both + one dataset: KB merged with that dataset only
+                # Both + one dataset: KB merged with that dataset only (no merging of all CSVs)
                 doc = next((d for d in all_docs if d.get("name") == document_name), None)
                 doc_type = (doc.get("type") or "").lower() if doc else ""
                 if doc_type in ("csv", "xlsx"):
@@ -857,17 +857,15 @@ async def get_causal_graph_endpoint(
                     "source": "both",
                     "document_name": document_name,
                 }
-            datasets = [
-                doc["name"] for doc in all_docs
-                if (doc.get("type") or "").lower() == "csv" and not _is_test_document(doc.get("name", ""))
-            ]
-            to_merge = [("kb", kb_data)]
-            for doc_name in datasets:
-                g = get_data_driven_causal_graph(doc_name)
-                if g and (g.get("nodes") or g.get("edges")):
-                    to_merge.append((doc_name, g))
-            merged = _merge_causal_graphs(to_merge)
-            return {**merged, "status": "success", "source": "both"}
+            # Both without document_name: return KB only and tell client to pick one dataset
+            return {
+                "nodes": kb_data.get("nodes", []),
+                "edges": kb_data.get("edges", []),
+                "stats": kb_data.get("stats", {}),
+                "status": "success",
+                "source": "both",
+                "warning": "Select a dataset above to combine with the knowledge graph. Without a selection, only the KB graph is shown.",
+            }
         # source == "kb": optional document_name filters KB to that document only
         if source == "kb" and document_name:
             print(f"📊 Causal graph requested (include_inferred={include_inferred}, source=kb, document_name={document_name})")
@@ -933,11 +931,11 @@ async def get_causal_graph_sources_endpoint():
 
 @app.get("/api/knowledge/causal-graph/export")
 async def export_causal_graph_endpoint(
-    source: str = Query("all", description="Export: 'kb' (knowledge base only), 'all' (KB + all datasets), or 'dataset' (single dataset)"),
+    source: str = Query("all", description="Export: 'kb' (KB only), 'data_only' (CSV datasets only), 'all' (KB + all datasets), or 'dataset' (single dataset)"),
     document_name: Optional[str] = Query(None, description="Required when source=dataset: document name with data-driven graph"),
     include_inferred: bool = Query(True, description="Include inferred causal relationships (for KB)"),
 ):
-    """Export causal graph(s) as JSON: KB only, all sources (KB + datasets), or one dataset."""
+    """Export causal graph(s) as JSON: KB only, CSV-only, all sources, or one dataset."""
     try:
         from datetime import datetime
         from causal_graph import get_causal_graph_data, get_data_driven_causal_graph
@@ -982,10 +980,39 @@ async def export_causal_graph_endpoint(
             print(f"✅ GET /api/knowledge/causal-graph/export: dataset {document_name} — {len(export_data['nodes'])} nodes, {len(export_data['edges'])} edges")
             return export_data
 
-        # source == "all": KB + all CSV datasets from documents store
-        kb_data = get_causal_graph_data(include_inferred=include_inferred)
         all_docs = get_all_documents()
         datasets = [doc["name"] for doc in all_docs if (doc.get("type") or "").lower() == "csv"]
+
+        if source == "data_only":
+            # CSV datasets only (no KB)
+            export_data = {
+                "metadata": {
+                    "version": "1.0",
+                    "exported_at": exported_at,
+                    "source": "data_only",
+                    "sources": datasets,
+                },
+                "datasets": {},
+            }
+            for doc_name in datasets:
+                g = get_data_driven_causal_graph(doc_name)
+                if g:
+                    entry = {
+                        "nodes": g.get("nodes", []),
+                        "edges": g.get("edges", []),
+                        "stats": g.get("stats", {}),
+                    }
+                    if g.get("data_columns") is not None and g.get("data_rows") is not None:
+                        entry["data_columns"] = g["data_columns"]
+                        entry["data_rows"] = g["data_rows"]
+                    export_data["datasets"][doc_name] = entry
+            total_nodes = sum(len(v.get("nodes", [])) for v in export_data["datasets"].values())
+            total_edges = sum(len(v.get("edges", [])) for v in export_data["datasets"].values())
+            print(f"✅ GET /api/knowledge/causal-graph/export: data_only — {total_nodes} nodes, {total_edges} edges ({len(datasets)} dataset(s))")
+            return export_data
+
+        # source == "all": KB + all CSV datasets from documents store
+        kb_data = get_causal_graph_data(include_inferred=include_inferred)
         export_data = {
             "metadata": {
                 "version": "1.0",

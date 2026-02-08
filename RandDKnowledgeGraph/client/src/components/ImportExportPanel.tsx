@@ -18,9 +18,11 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 
+export type CausalExportSource = "kb" | "data_only" | "all";
+
 interface ImportExportPanelProps {
   onExport: (includeInferred: boolean, minConfidence: number) => void;
-  onExportCausalGraph?: () => void;
+  onExportCausalGraph?: (source: CausalExportSource) => void;
   onImport: (file: File) => void;
   metadata?: {
     version: string;
@@ -138,14 +140,36 @@ export function ImportExportPanel({ onExport, onExportCausalGraph, onImport, met
 
       {onExportCausalGraph && (
         <Card className="p-6">
-          <h3 className="text-lg font-semibold mb-4">Export Causal Graph</h3>
+          <h3 className="text-lg font-semibold mb-4">Export Causal Relationships</h3>
           <p className="text-sm text-muted-foreground mb-4">
-            Download causal relationships (KB + all data-driven datasets) as JSON for backup or sharing.
+            Download causal relationships as JSON. Choose what to include:
           </p>
-          <Button onClick={onExportCausalGraph} variant="outline" data-testid="button-export-causal">
-            <Download className="h-4 w-4 mr-2" />
-            Download Causal Graph
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={() => onExportCausalGraph("data_only")}
+              variant="outline"
+              data-testid="button-export-causal-csv"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              CSV only
+            </Button>
+            <Button
+              onClick={() => onExportCausalGraph("kb")}
+              variant="outline"
+              data-testid="button-export-causal-kb"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              KB only
+            </Button>
+            <Button
+              onClick={() => onExportCausalGraph("all")}
+              variant="outline"
+              data-testid="button-export-causal"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              KB + all CSV
+            </Button>
+          </div>
         </Card>
       )}
 

@@ -98,28 +98,28 @@ export default function ImportExportPage() {
     }
   };
 
-  const handleExportCausalGraph = async () => {
+  const handleExportCausalGraph = async (source: "kb" | "data_only" | "all") => {
     try {
       toast({
-        title: "Exporting causal graph...",
-        description: "Preparing KB + all datasets.",
+        title: "Exporting causal relationships...",
+        description: source === "data_only" ? "CSV datasets only." : source === "kb" ? "Knowledge base only." : "KB + all datasets.",
       });
-      const result = await hfApi.exportCausalGraph("all", undefined, true);
+      const result = await hfApi.exportCausalGraph(source, undefined, true);
       if (result.success && result.data) {
         const blob = new Blob([JSON.stringify(result.data, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `causal-graph-${Date.now()}.json`;
+        a.download = `causal-${source}-${Date.now()}.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
         const meta = result.data.metadata || {};
-        const count = meta.sources?.length ?? 0;
+        const count = Array.isArray(meta.sources) ? meta.sources.length : (source === "data_only" ? Object.keys((result.data as any).datasets || {}).length : 1);
         toast({
-          title: "Causal graph exported",
-          description: `Exported ${count} source(s): KB + datasets.`,
+          title: "Causal relationships exported",
+          description: source === "data_only" ? `Exported ${count} CSV dataset(s).` : source === "kb" ? "Exported KB causal graph." : `Exported KB + ${count - 1} dataset(s).`,
         });
       } else {
         throw new Error(result.error || "Failed to export causal graph");

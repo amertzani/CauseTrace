@@ -75,6 +75,8 @@ export const graphEdgeSchema = z.object({
   uploadedAt: z.string().optional(),
   isInferred: z.boolean().optional(),  // New: marks if edge represents an inferred fact
   agent: z.string().optional(),  // Agent that processed the file
+  confidence: z.number().min(0).max(1).optional(),  // 0–1, used for edge darkness when effect not set
+  effectEstimate: z.number().optional(),  // Causal effect (e.g. from DoWhy); absolute value drives edge darkness (0 = light, ~2 = dark)
 });
 
 export type GraphNode = z.infer<typeof graphNodeSchema>;

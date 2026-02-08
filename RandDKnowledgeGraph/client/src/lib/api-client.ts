@@ -508,9 +508,9 @@ class HuggingFaceApiClient {
     return { success: false, error: "DoWhy requires local backend" };
   }
 
-  // Causal Graph - Export (KB only, single dataset, or all KB + datasets)
+  // Causal Graph - Export (KB only, CSV only, single dataset, or all KB + datasets)
   async exportCausalGraph(
-    source: "kb" | "all" | "dataset" = "all",
+    source: "kb" | "data_only" | "all" | "dataset" = "all",
     documentName?: string,
     includeInferred: boolean = true
   ): Promise<ApiResponse<any>> {
