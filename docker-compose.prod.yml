@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  backend:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER:-amertzani}/enesy-backend:latest
+    environment:
+      API_PORT: "8001"
+      API_HOST: "0.0.0.0"
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/api/documents"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER:-amertzani}/enesy-frontend:latest
+    environment:
+      NODE_ENV: production
+      PORT: "5006"
+      VITE_API_URL: ${VITE_API_URL:-http://backend:8001}
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "5006:5006"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5006"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
