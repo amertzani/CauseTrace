@@ -1,0 +1,26 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      API_PORT: "8001"
+      API_HOST: "0.0.0.0"
+    ports:
+      - "8001:8001"
+
+  frontend:
+    build:
+      context: ./RandDKnowledgeGraph
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_API_URL: http://backend:8001
+    environment:
+      NODE_ENV: production
+      PORT: "5006"
+    depends_on:
+      - backend
+    ports:
+      - "5006:5006"
