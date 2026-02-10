@@ -28,7 +28,9 @@ import json
 from datetime import datetime
 from typing import List, Dict, Optional
 
-DOCUMENTS_FILE = "documents_store.json"
+# Use same directory as this module so path doesn't depend on CWD at runtime
+_BASE_DIR = os.path.dirname(os.path.abspath(os.path.realpath(__file__)))
+DOCUMENTS_FILE = os.path.join(_BASE_DIR, "documents_store.json")
 
 def load_documents() -> List[Dict]:
     """Load documents from storage"""
@@ -60,14 +62,14 @@ def save_documents(documents: List[Dict]):
 def add_document(name: str, size: int, file_type: str, facts_extracted: int = 0) -> Dict:
     """
     Add a new document to storage.
-    IMPORTANT: Only saves documents with facts_extracted > 0.
-    Documents with 0 facts are NEVER saved.
+    Saves documents with facts_extracted > 0. CSV files are also saved when
+    facts_extracted == 0 so they appear in uploaded docs and causal graph sources.
     """
-    # NEVER save documents with 0 facts
-    if facts_extracted <= 0:
+    # Save if has facts, or if CSV (so causal graph can list and show the dataset)
+    if facts_extracted <= 0 and (not file_type or file_type.lower() != "csv"):
         print(f"⚠️  Skipping document {name}: has 0 facts (not saved)")
         return None
-    
+
     documents = load_documents()
     
     # Check if document already exists
@@ -105,6 +107,65 @@ def get_document_by_name(name: str) -> Optional[Dict]:
 def get_all_documents() -> List[Dict]:
     """Get all documents"""
     return load_documents()
+
+def count_facts_for_document(document_name: str) -> int:
+    """
+    Count how many facts in the knowledge graph have this document as their source.
+    
+    Args:
+        document_name: Name of the document to count facts for
+        
+    Returns:
+        Number of facts that have this document as source
+    """
+    try:
+        from knowledge import graph as kb_graph, get_fact_source_document
+        from urllib.parse import unquote
+        
+        fact_count = 0
+        
+        for s, p, o in kb_graph:
+            # Skip metadata triples
+            predicate_str = str(p)
+            if ('fact_subject' in predicate_str or 'fact_predicate' in predicate_str or 
+                'fact_object' in predicate_str or 'has_details' in predicate_str or 
+                'source_document' in predicate_str or 'uploaded_at' in predicate_str or
+                'is_inferred' in predicate_str or 'confidence' in predicate_str or
+                'processed_by_agent' in predicate_str):
+                continue
+            
+            # Extract subject and predicate from URI
+            subject_uri_str = str(s)
+            if 'urn:entity:' in subject_uri_str:
+                subject = subject_uri_str.split('urn:entity:')[-1]
+            elif 'urn:' in subject_uri_str:
+                subject = subject_uri_str.split('urn:')[-1]
+            else:
+                subject = subject_uri_str
+            subject = unquote(subject).replace('_', ' ')
+            
+            predicate_uri_str = str(p)
+            if 'urn:predicate:' in predicate_uri_str:
+                predicate = predicate_uri_str.split('urn:predicate:')[-1]
+            elif 'urn:' in predicate_uri_str:
+                predicate = predicate_uri_str.split('urn:')[-1]
+            else:
+                predicate = predicate_uri_str
+            predicate = unquote(predicate).replace('_', ' ')
+            
+            object_val = str(o)
+            
+            # Check if this fact has this document as source
+            sources = get_fact_source_document(subject, predicate, object_val)
+            for source_doc, _ in sources:
+                if source_doc == document_name:
+                    fact_count += 1
+                    break  # Count each fact only once
+        
+        return fact_count
+    except Exception as e:
+        print(f"⚠️  Error counting facts for document {document_name}: {e}")
+        return 0
 
 
 def delete_document(document_id: str) -> bool:
@@ -151,24 +212,35 @@ def cleanup_documents_without_facts() -> int:
         print("⚠️  Warning: Could not load knowledge graph for verification")
     
     # PERMANENTLY REMOVE all documents with facts_extracted = 0
-    # OR documents that claim facts but the graph is empty/has fewer facts
+    # OR documents that claim facts but don't actually have facts in the graph
     cleaned_documents = []
     removed_count = 0
     
     for doc in documents:
+        document_name = doc.get('name', 'unknown')
         facts_claimed = doc.get('facts_extracted', 0)
         
         if facts_claimed <= 0:
             # Document has 0 facts - PERMANENTLY REMOVE IT
             removed_count += 1
-            print(f"   🗑️  Removing {doc.get('name', 'unknown')}: claims 0 facts")
+            print(f"   🗑️  Removing {document_name}: claims 0 facts")
         elif graph_fact_count == 0:
             # Graph is empty but document claims facts - REMOVE IT
             removed_count += 1
-            print(f"   🗑️  Removing {doc.get('name', 'unknown')}: claims {facts_claimed} facts but graph is empty")
+            print(f"   🗑️  Removing {document_name}: claims {facts_claimed} facts but graph is empty")
         else:
-            # Document has facts - KEEP IT (we trust the count if graph has facts)
-            cleaned_documents.append(doc)
+            # Verify the document actually has facts in the graph
+            actual_facts = count_facts_for_document(document_name)
+            if actual_facts == 0:
+                # Document claims facts but none exist in graph - REMOVE IT
+                removed_count += 1
+                print(f"   🗑️  Removing {document_name}: claims {facts_claimed} facts but graph has 0 facts for this document")
+            else:
+                # Update fact count to match reality
+                if actual_facts != facts_claimed:
+                    doc['facts_extracted'] = actual_facts
+                    print(f"   🔄 Updated {document_name}: {facts_claimed} → {actual_facts} facts")
+                cleaned_documents.append(doc)
     
     if removed_count > 0:
         save_documents(cleaned_documents)

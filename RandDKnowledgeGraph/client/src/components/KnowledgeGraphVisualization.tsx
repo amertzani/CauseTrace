@@ -13,6 +13,8 @@ import * as d3Select from "d3-selection";
 interface KnowledgeGraphVisualizationProps {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  /** Override title (e.g. "Causal Graph" for causal page) */
+  graphTitle?: string;
   onNodeClick?: (node: GraphNode) => void;
   onNodeEdit?: (node: GraphNode) => void;
   onNodeMove?: (nodeId: string, position: { x: number; y: number; z: number }) => void;
@@ -41,10 +43,29 @@ interface EdgeWithPositions extends GraphEdge {
   target: NodeWithPosition | string;
 }
 
+// Map absolute causal effect to edge stroke: 0 = light grey, ~2 = dark grey. Uses effectEstimate or confidence.
+function getEdgeStrokeByEffect(edge: GraphEdge, hovered: boolean): { stroke: string; opacity: number } {
+  const absEffect = edge.effectEstimate != null ? Math.abs(edge.effectEstimate) : null;
+  const conf = edge.confidence != null ? edge.confidence : null;
+  // Strength 0 -> light (#94A3B8); strength 2 -> dark (#334155). Clamp to [0, 2.5].
+  const strength = absEffect != null ? Math.min(2.5, absEffect) : (conf != null ? conf * 2 : 0.5);
+  const t = Math.min(1, strength / 2); // 0..1
+  const r = Math.round(148 - 97 * t);
+  const g = Math.round(163 - 98 * t);
+  const b = Math.round(184 - 99 * t);
+  const stroke = hovered
+    ? "#2563EB"
+    : edge.isInferred
+      ? "#A78BFA"
+      : `rgb(${r},${g},${b})`;
+  const opacity = hovered ? 0.9 : 0.3 + t * 0.65; // 0.3 (light) to 0.95 (dark)
+  return { stroke, opacity };
+}
+
 // Enhanced color palette for different node types
 const getNodeColor = (type: string, label: string): { fill: string; stroke: string; typeLabel: string } => {
-  const lowerType = type.toLowerCase();
-  const lowerLabel = label.toLowerCase();
+  const lowerType = (type || "").toLowerCase();
+  const lowerLabel = (label || "").toLowerCase();
   
   // Detect entity types from labels
   if (lowerLabel.match(/\b(person|dr\.|professor|researcher|scientist|engineer)\b/i)) {
@@ -79,6 +100,7 @@ const getNodeColor = (type: string, label: string): { fill: string; stroke: stri
 export function KnowledgeGraphVisualization({ 
   nodes, 
   edges,
+  graphTitle = "Knowledge Graph Network",
   onNodeClick,
   onNodeEdit,
   onNodeMove,
@@ -109,6 +131,53 @@ export function KnowledgeGraphVisualization({
   const edgesRef = useRef<EdgeWithPositions[]>([]);
   const dragRef = useRef<d3Drag.DragBehavior<SVGGElement, NodeWithPosition> | null>(null);
   const nodeGroupsRef = useRef<Map<string, SVGGElement>>(new Map());
+  const panZoomRef = useRef({ pan: { x: 0, y: 0 }, zoom: 1 });
+  const graphSizeRef = useRef({ width: 800, height: 600 });
+  const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
+  const dragRafRef = useRef<number | null>(null);
+
+  const scheduleTick = useCallback(() => {
+    if (dragRafRef.current != null) return;
+    dragRafRef.current = requestAnimationFrame(() => {
+      dragRafRef.current = null;
+      setSimulationTick((t) => t + 1);
+    });
+  }, []);
+
+  // Keep pan/zoom ref in sync for drag coordinate conversion
+  useEffect(() => {
+    panZoomRef.current = { pan: { ...pan }, zoom };
+  }, [pan, zoom]);
+
+  // Measure container so transform and drag use the same dimensions (avoids "exploding" on drag)
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const update = () => {
+      const w = container.clientWidth || 800;
+      const h = container.clientHeight || 600;
+      graphSizeRef.current = { width: w, height: h };
+      setContainerSize((prev) => (prev.width === w && prev.height === h ? prev : { width: w, height: h }));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, []);
+  useEffect(() => {
+    const w = containerRef.current?.clientWidth || 800;
+    const h = containerRef.current?.clientHeight || 600;
+    graphSizeRef.current = { width: w, height: h };
+  }, [simulationTick]);
+
+  useEffect(() => {
+    return () => {
+      if (dragRafRef.current != null) {
+        cancelAnimationFrame(dragRafRef.current);
+        dragRafRef.current = null;
+      }
+    };
+  }, []);
 
   // Initialize force simulation
   useEffect(() => {
@@ -116,21 +185,17 @@ export function KnowledgeGraphVisualization({
 
     const width = containerRef.current?.clientWidth || 800;
     const height = containerRef.current?.clientHeight || 600;
+    graphSizeRef.current = { width, height };
     const centerX = width / 2;
     const centerY = height / 2;
 
-    // Initialize nodes with positions - spread out for large graphs
+    // Initialize nodes with positions - even circular spread to avoid initial tangles
     const nodesWithPos: NodeWithPosition[] = nodes.map((node, i) => {
-      const angle = (i / nodes.length) * 2 * Math.PI;
-      // Adaptive initial radius based on graph size
-      let radius;
-      if (nodes.length > 200) {
-        radius = Math.min(300, Math.sqrt(nodes.length) * 15);
-      } else if (nodes.length > 100) {
-        radius = Math.min(250, Math.sqrt(nodes.length) * 12);
-      } else {
-        radius = Math.min(200, Math.sqrt(nodes.length) * 10);
-      }
+      const angle = (i / Math.max(nodes.length, 1)) * 2 * Math.PI - Math.PI / 2; // Start from top
+      const radius = Math.min(
+        Math.max(width, height) * 0.35,
+        Math.sqrt(Math.max(nodes.length, 1)) * 18
+      );
       return {
         ...node,
         x: centerX + Math.cos(angle) * radius,
@@ -154,58 +219,44 @@ export function KnowledgeGraphVisualization({
     nodesRef.current = nodesWithPos;
     edgesRef.current = edgesWithPos;
 
-    // Create force simulation with balanced parameters for large graphs
+    // Force simulation tuned for a cleaner, less messy layout
     const simulation = d3Force.forceSimulation<NodeWithPosition>(nodesWithPos)
       .force("link", d3Force.forceLink<NodeWithPosition, EdgeWithPositions>(edgesWithPos)
         .id((d: any) => d.id)
         .distance((d: any) => {
-          // Adaptive link distances based on graph size
-          if (nodes.length > 200) {
-            return 80 + (d.source?.connections || 0) * 3;
-          } else if (nodes.length > 100) {
-            return 100 + (d.source?.connections || 0) * 4;
-          } else {
-            return 120 + (d.source?.connections || 0) * 5;
-          }
+          const conn = d.source?.connections ?? 0;
+          const base = nodes.length > 150 ? 100 : nodes.length > 50 ? 130 : 160;
+          return base + Math.min(conn * 4, 40); // Consistent spacing, slight stretch for hubs
         })
-        .strength(0.3)) // Moderate link force
+        .strength(0.5)) // Stronger links = more even edge lengths, less tangling
       .force("charge", d3Force.forceManyBody()
         .strength((d: any) => {
-          // Balanced repulsion - stronger for larger graphs
-          if (nodes.length > 200) {
-            return -300;
-          } else if (nodes.length > 100) {
-            return -400;
-          } else {
-            return -500;
-          }
+          const n = nodes.length;
+          if (n > 150) return -420;
+          if (n > 50) return -550;
+          return -700; // Stronger repulsion for small graphs = more spread, less clutter
         }))
-      .force("center", d3Force.forceCenter(centerX, centerY).strength(0.1)) // Moderate center force
+      .force("center", d3Force.forceCenter(centerX, centerY).strength(0.08)) // Gentle pull to center
       .force("collision", d3Force.forceCollide()
         .radius((d: any) => {
-          // Proper collision radius - match node size
-          const baseRadius = 20;
-          const connectionBonus = Math.min((d.connections || 0) * 3, 30);
-          return baseRadius + connectionBonus + 5; // Extra padding
+          const baseRadius = 22;
+          const connectionBonus = Math.min((d.connections || 0) * 3, 28);
+          return baseRadius + connectionBonus + 10; // Generous padding so nodes/labels don't overlap
         })
-        .strength(0.8)); // Strong collision to prevent overlap
+        .strength(1)); // Full collision to prevent any overlap
 
     simulationRef.current = simulation;
 
-    // Update positions on tick
     simulation.on("tick", () => {
-      // Trigger re-render by updating state
-      setSimulationTick(prev => prev + 1);
+      scheduleTick();
     });
 
-    // Disable drag behavior - let simulation handle positioning
     dragRef.current = null;
 
-    // Run simulation longer for better convergence, then stop and fix positions
-    simulation.alphaDecay(0.05); // Faster decay for quicker stabilization
-    simulation.alpha(1).restart(); // Start with full energy
+    // Slower alpha decay = smoother convergence; run long enough to settle
+    simulation.alphaDecay(0.022);
+    simulation.alpha(1).restart();
     setTimeout(() => {
-      // Fix all node positions after simulation completes
       nodesWithPos.forEach(node => {
         if (node.x !== undefined && node.y !== undefined) {
           node.fx = node.x;
@@ -213,12 +264,82 @@ export function KnowledgeGraphVisualization({
         }
       });
       simulation.stop();
-    }, 5000); // Run longer for large graphs
+    }, 6500);
 
     return () => {
       simulation.stop();
     };
-  }, [nodes, edges]); // Removed pan, zoom, onNodeMove - simulation should not restart on pan/zoom
+  }, [nodes, edges, scheduleTick]); // Removed pan, zoom, onNodeMove - simulation should not restart on pan/zoom
+
+  const dragOffsetRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+
+  // SVG transform: translate(pan.x + width/2, pan.y + height/2) scale(zoom).
+  // graph -> svg: (pan.x + width/2 + gx*zoom, pan.y + height/2 + gy*zoom)
+  // svg -> graph: (svgX - pan.x - width/2) / zoom
+  const pointerEventToGraph = useCallback((event: any): { x: number; y: number } | null => {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const sourceEvent = event?.sourceEvent ?? event;
+    const [svgX, svgY] = d3Select.pointer(sourceEvent, svg);
+    const { pan, zoom } = panZoomRef.current;
+    const { width, height } = graphSizeRef.current;
+    return {
+      x: (svgX - pan.x - width / 2) / zoom,
+      y: (svgY - pan.y - height / 2) / zoom,
+    };
+  }, []);
+
+  // Attach d3-drag; convert pointer coords to graph coords using the same transform as render.
+  useEffect(() => {
+    if (simulationTick === 0 || !simulationRef.current || nodes.length === 0 || !svgRef.current) return;
+    const svg = svgRef.current;
+    const drag = d3Drag.drag<SVGGElement, NodeWithPosition>()
+      .container(svg)
+      .on("start", (event: any) => {
+        event.sourceEvent?.stopPropagation?.();
+        event.sourceEvent?.preventDefault?.();
+        const node = event.subject;
+        if (node != null && node.x != null && node.y != null) {
+          const pointer = pointerEventToGraph(event);
+          if (pointer) {
+            dragOffsetRef.current.set(node.id, { x: node.x - pointer.x, y: node.y - pointer.y });
+          }
+          node.fx = node.x;
+          node.fy = node.y;
+        }
+      })
+      .on("drag", (event: any) => {
+        const node = event.subject;
+        if (node == null) return;
+        const pointer = pointerEventToGraph(event);
+        if (!pointer) return;
+        const offset = dragOffsetRef.current.get(node.id) || { x: 0, y: 0 };
+        const nextX = pointer.x + offset.x;
+        const nextY = pointer.y + offset.y;
+        node.fx = node.x = nextX;
+        node.fy = node.y = nextY;
+        scheduleTick();
+      })
+      .on("end", (event: any) => {
+        const node = event.subject;
+        if (node == null) return;
+        const pointer = pointerEventToGraph(event);
+        if (!pointer) return;
+        const offset = dragOffsetRef.current.get(node.id) || { x: 0, y: 0 };
+        const nextX = pointer.x + offset.x;
+        const nextY = pointer.y + offset.y;
+        node.fx = node.x = nextX;
+        node.fy = node.y = nextY;
+        scheduleTick();
+        onNodeMove?.(node.id, { x: nextX, y: nextY, z: 0 });
+        dragOffsetRef.current.delete(node.id);
+      });
+    nodeGroupsRef.current.forEach((el, nodeId) => {
+      const node = nodesRef.current.find((n) => n.id === nodeId);
+      if (node) d3Select.select(el).datum(node).call(drag);
+    });
+    dragRef.current = drag;
+  }, [simulationTick, nodes.length, onNodeMove, pointerEventToGraph, scheduleTick]);
 
   // Filter nodes and edges
   const filteredData = useMemo(() => {
@@ -319,10 +440,13 @@ export function KnowledgeGraphVisualization({
   }, []);
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button === 0) {
-      setIsDragging(true);
-      setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest?.(".node-group") || target.closest?.("g[class*='node-group']")) {
+      return; // Let d3-drag handle node drag; don't start canvas pan
     }
+    setIsDragging(true);
+    setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
@@ -404,13 +528,12 @@ export function KnowledgeGraphVisualization({
     setSelectedNodeForConnection(null);
   };
 
-  const width = 800;
-  const height = 600;
+  const { width, height } = containerSize;
 
   return (
     <Card className="p-6">
       <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
-        <h3 className="text-lg font-semibold">Knowledge Graph Network</h3>
+        <h3 className="text-lg font-semibold">{graphTitle}</h3>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -486,6 +609,17 @@ export function KnowledgeGraphVisualization({
               markerUnits="strokeWidth"
             >
               <polygon points="0 0, 10 3, 0 6" fill="#64748B" opacity="0.6"/>
+            </marker>
+            <marker 
+              id="arrowhead-direct" 
+              markerWidth="10" 
+              markerHeight="10" 
+              refX="9" 
+              refY="3" 
+              orient="auto"
+              markerUnits="strokeWidth"
+            >
+              <polygon points="0 0, 10 3, 0 6" fill="#334155" opacity="0.95"/>
             </marker>
             <filter id="glow">
               <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
@@ -578,6 +712,14 @@ export function KnowledgeGraphVisualization({
                                 <span className="font-medium">Added:</span> {new Date(edge.uploadedAt).toLocaleDateString()}
                               </div>
                             )}
+                            {edge.agent && (
+                              <div className="mb-1 mt-2 pt-2 border-t">
+                                <span className="font-medium text-xs">Processed by:</span>
+                                <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                                  {edge.agent.replace(' Agent', '')}
+                                </span>
+                              </div>
+                            )}
                             {edge.isInferred && (
                               <div className="mt-2 pt-2 border-t">
                                 <span className="text-purple-400 font-medium text-xs">⚠️ Inferred Fact</span>
@@ -611,21 +753,30 @@ export function KnowledgeGraphVisualization({
                     }}
                   />
                   
-                  {/* Visible edge line - different style for inferred edges */}
-                  <line
-                    x1={x1}
-                    y1={y1}
-                    x2={x2}
-                    y2={y2}
-                    stroke={edge.isInferred 
-                      ? (hoveredEdge === edge.id ? "#8B5CF6" : "#A78BFA")  // Purple for inferred
-                      : (hoveredEdge === edge.id ? "#3B82F6" : "#94A3B8")}  // Blue for original
-                    strokeWidth={hoveredEdge === edge.id ? 3 : isHighlighted ? 2 : 1.5}
-                    strokeDasharray={edge.isInferred ? "5,5" : "none"}  // Dashed for inferred
-                    markerEnd={zoom > 0.5 ? "url(#arrowhead)" : undefined}
-                    opacity={hoveredEdge === edge.id ? 0.9 : isHighlighted ? 0.7 : zoom > 0.6 ? 0.5 : 0.4}
-                    style={{ cursor: "pointer", pointerEvents: "none" }}
-                  />
+                  {/* Visible edge line - darkness by absolute causal effect (0 = light, ~2 = dark grey); inferred = purple dashed */}
+                  {(() => {
+                    const { stroke: effectStroke, opacity: effectOpacity } = getEdgeStrokeByEffect(edge, hoveredEdge === edge.id);
+                    const strokeColor = edge.isInferred
+                      ? (hoveredEdge === edge.id ? "#8B5CF6" : "#A78BFA")
+                      : effectStroke;
+                    const opacityVal = edge.isInferred
+                      ? (hoveredEdge === edge.id ? 0.9 : isHighlighted ? 0.7 : zoom > 0.6 ? 0.5 : 0.4)
+                      : (hoveredEdge === edge.id ? 0.9 : isHighlighted ? 0.7 : zoom > 0.6 ? effectOpacity : effectOpacity * 0.85);
+                    return (
+                      <line
+                        x1={x1}
+                        y1={y1}
+                        x2={x2}
+                        y2={y2}
+                        stroke={strokeColor}
+                        strokeWidth={hoveredEdge === edge.id ? 3 : isHighlighted ? 2 : 1.5}
+                        strokeDasharray={edge.isInferred ? "5,5" : "none"}
+                        markerEnd={zoom > 0.5 ? (edge.isInferred ? "url(#arrowhead)" : "url(#arrowhead-direct)") : undefined}
+                        opacity={opacityVal}
+                        style={{ cursor: "pointer", pointerEvents: "none" }}
+                      />
+                    );
+                  })()}
                   
                   {/* Edge label - more visible */}
                   {length > 50 && zoom > 0.5 && (
@@ -679,6 +830,7 @@ export function KnowledgeGraphVisualization({
               return (
                 <g
                   key={node.id}
+                  className="node-group"
                   ref={(el) => {
                     if (el) {
                       nodeGroupsRef.current.set(node.id, el);
@@ -865,6 +1017,7 @@ export function KnowledgeGraphVisualization({
           <p className="font-semibold mb-1">💡 Navigation:</p>
           <ul className="space-y-1">
             <li>• <strong>Drag canvas</strong> to pan</li>
+            <li>• <strong>Drag nodes</strong> to reposition</li>
             <li>• <strong>Pinch/scroll</strong> to zoom</li>
             <li>• <strong>Click nodes</strong> to select</li>
             <li>• <strong>Click "Connect"</strong> to link nodes</li>

@@ -1,0 +1,34 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    g++ \
+    make \
+    curl \
+    git \
+    libffi-dev \
+    libxml2 \
+    libxslt1.1 \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-core.txt requirements-ml.txt requirements.txt /app/
+
+RUN pip install --upgrade pip && \
+    pip install -r requirements-core.txt && \
+    BLIS_ARCH=generic pip install -r requirements-ml.txt
+
+COPY . /app
+
+EXPOSE 8001
+ENV API_PORT=8001
+ENV API_HOST=0.0.0.0
+
+CMD ["python", "api_server.py"]

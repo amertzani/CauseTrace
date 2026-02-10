@@ -18,6 +18,7 @@ export const factSchema = z.object({
   isInferred: z.boolean().optional(),  // Backward compatibility: marks if fact is inferred
   type: z.enum(["original", "inferred"]).optional(),  // New: type of fact ("original" or "inferred")
   confidence: z.number().min(0).max(1).optional(),  // New: confidence score (0.0 to 1.0)
+  agent: z.string().optional(),  // Agent that processed the file (e.g., "PDF Agent", "CSV Agent")
 });
 
 export const insertFactSchema = factSchema.omit({ id: true });
@@ -73,7 +74,31 @@ export const graphEdgeSchema = z.object({
   sourceDocument: z.string().optional(),
   uploadedAt: z.string().optional(),
   isInferred: z.boolean().optional(),  // New: marks if edge represents an inferred fact
+  agent: z.string().optional(),  // Agent that processed the file
+  confidence: z.number().min(0).max(1).optional(),  // 0–1, used for edge darkness when effect not set
+  effectEstimate: z.number().optional(),  // Causal effect (e.g. from DoWhy); absolute value drives edge darkness (0 = light, ~2 = dark)
 });
 
 export type GraphNode = z.infer<typeof graphNodeSchema>;
 export type GraphEdge = z.infer<typeof graphEdgeSchema>;
+
+// Simulator Schemas
+export const experimentConfigSchema = z.object({
+  name: z.string(),
+  scenarioDescription: z.string(), // Natural language scenario description
+  inputData: z.string().optional(), // Optional extra data not in knowledge base
+  scenarioType: z.enum(["hypothesis", "prediction", "what_if", "validation"]),
+  parameters: z.record(z.any()).optional(),
+});
+
+export const experimentResultSchema = z.object({
+  id: z.string(),
+  config: experimentConfigSchema,
+  status: z.enum(["running", "completed", "failed"]),
+  results: z.any().optional(),
+  error: z.string().optional(),
+  timestamp: z.string(),
+});
+
+export type ExperimentConfig = z.infer<typeof experimentConfigSchema>;
+export type ExperimentResult = z.infer<typeof experimentResultSchema>;

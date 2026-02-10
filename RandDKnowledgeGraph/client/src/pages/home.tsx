@@ -1,11 +1,35 @@
+import { useState, useEffect } from "react";
 import { ArrowRight, Upload, Database, Network, MessageSquare } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { StatsCards } from "@/components/StatsCards";
 import { useLocation } from "wouter";
+import { hfApi } from "@/lib/api-client";
 
 export default function HomePage() {
   const [, setLocation] = useLocation();
+  const [stats, setStats] = useState({
+    documentsCount: 0,
+    factsCount: 0,
+    nodesCount: 0,
+    connectionsCount: 0,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    hfApi.getDashboardStats().then((res) => {
+      if (cancelled || !res.success || !res.data) return;
+      setStats({
+        documentsCount: res.data.documents_count ?? 0,
+        factsCount: res.data.facts_count ?? 0,
+        nodesCount: res.data.nodes_count ?? 0,
+        connectionsCount: res.data.connections_count ?? 0,
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const features = [
     {
@@ -44,10 +68,10 @@ export default function HomePage() {
       </div>
 
       <StatsCards
-        documentsCount={12}
-        factsCount={156}
-        nodesCount={78}
-        connectionsCount={234}
+        documentsCount={stats.documentsCount}
+        factsCount={stats.factsCount}
+        nodesCount={stats.nodesCount}
+        connectionsCount={stats.connectionsCount}
       />
 
       <div>

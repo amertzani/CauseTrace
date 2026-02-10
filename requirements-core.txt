@@ -1,0 +1,18 @@
+# Core dependencies — install first: pip install -r requirements-core.txt
+# Resolves quickly; no gradio/spacy/torch/causal stack.
+rdflib>=6.0.0
+huggingface_hub
+PyPDF2
+python-docx
+pandas
+openpyxl
+chardet
+networkx
+matplotlib
+plotly
+numpy>=1.24,<2.0
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
+clean-text>=0.6.0

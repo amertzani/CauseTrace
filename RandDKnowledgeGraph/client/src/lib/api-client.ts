@@ -16,6 +16,30 @@ const USE_LOCAL_BACKEND = true;
 const USE_LOCAL_STORAGE = false; // Fallback to local storage if backend fails
 const USE_BACKEND_PROXY = false; // Don't use Replit proxy - connect directly
 
+/** Session storage key for document names uploaded in this tab/session. Used so Dataset dropdown only shows docs uploaded this session. */
+export const UPLOADED_DOCS_SESSION_KEY = "cause_trace_uploaded_docs";
+
+export function getUploadedDocNamesSession(): string[] {
+  try {
+    const raw = sessionStorage.getItem(UPLOADED_DOCS_SESSION_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+export function addUploadedDocNamesSession(names: string[]): void {
+  const current = getUploadedDocNamesSession();
+  const set = new Set([...current, ...names.filter(Boolean)]);
+  sessionStorage.setItem(UPLOADED_DOCS_SESSION_KEY, JSON.stringify([...set]));
+}
+
+export function clearUploadedDocNamesSession(): void {
+  sessionStorage.removeItem(UPLOADED_DOCS_SESSION_KEY);
+}
+
 interface ApiResponse<T> {
   success: boolean;
   data?: T;
@@ -181,7 +205,16 @@ class HuggingFaceApiClient {
       if (!response.ok) {
         const errorText = await response.text();
         console.error(`❌ API Error: ${response.status} - ${errorText}`);
-        throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+        // FastAPI returns { detail: "message" } on error; surface that to the user
+        let detail = errorText;
+        try {
+          const errJson = JSON.parse(errorText);
+          if (typeof errJson.detail === "string") detail = errJson.detail;
+          else if (Array.isArray(errJson.detail)) detail = errJson.detail.map((d: any) => d?.msg || d).join("; ");
+        } catch {
+          // use errorText as-is
+        }
+        throw new Error(detail || `HTTP ${response.status}`);
       }
 
       const data = await response.json();
@@ -211,20 +244,23 @@ class HuggingFaceApiClient {
     }
   }
 
-  // Document Upload - Updated for FastAPI
+  // Document Upload - FastAPI expects multipart form with field name "files"
   async uploadDocuments(files: File[]): Promise<ApiResponse<any>> {
+    if (!files?.length) {
+      return { success: false, error: "No files to upload." };
+    }
     const formData = new FormData();
     files.forEach((file) => formData.append("files", file));
 
-    // Calculate timeout based on file size (5 minutes base + 1 minute per MB)
+    // Timeout: 2 min base, +30s per MB (cap 10 min) so uploads complete without hanging
     const totalSizeMB = files.reduce((sum, file) => sum + file.size, 0) / (1024 * 1024);
-    const timeoutMs = Math.max(300000, 300000 + totalSizeMB * 60000); // Min 5 min, +1 min per MB
-    console.log(`📤 Uploading ${files.length} file(s), total ${totalSizeMB.toFixed(2)}MB, timeout: ${(timeoutMs/1000).toFixed(0)}s`);
+    const timeoutMs = Math.min(600000, Math.max(120000, 120000 + totalSizeMB * 30000));
+    console.log(`📤 Uploading ${files.length} file(s), total ${totalSizeMB.toFixed(2)}MB, timeout: ${(timeoutMs / 1000).toFixed(0)}s`);
 
     return this.request("/api/knowledge/upload", {
       method: "POST",
       body: formData,
-      headers: {}, // Let browser set Content-Type for FormData
+      headers: {}, // Do not set Content-Type; browser sets multipart/form-data with boundary
     }, timeoutMs);
   }
 
@@ -416,6 +452,80 @@ class HuggingFaceApiClient {
     return this.callGradioApi("api_delete_fact", [factId]);
   }
 
+  // Causal Graph - List available sources (KB + data-driven datasets)
+  async getCausalGraphSources(): Promise<ApiResponse<{ sources: { id: string; label: string; type: string }[] }>> {
+    if (USE_LOCAL_BACKEND) {
+      const response = await this.request("/api/knowledge/causal-graph/sources", { method: "GET" });
+      return response;
+    }
+    return { success: false, error: "Causal graph requires local backend" };
+  }
+
+  // Causal Graph - Get causal relationships (kb only, one dataset, data only, or both)
+  async getCausalGraph(
+    includeInferred: boolean = true,
+    source: "kb" | "dataset" | "data_only" | "both" = "kb",
+    documentName?: string
+  ): Promise<ApiResponse<any>> {
+    if (USE_LOCAL_BACKEND) {
+      const params = new URLSearchParams({
+        include_inferred: includeInferred.toString(),
+        source,
+      });
+      if (documentName) {
+        params.set("document_name", documentName);
+      }
+      const response = await this.request(`/api/knowledge/causal-graph?${params.toString()}`, {
+        method: "GET",
+      });
+      return response;
+    }
+    return {
+      success: false,
+      error: "Causal graph requires local backend",
+    };
+  }
+
+  // DoWhy: causal effect estimation on a data-driven causal graph
+  async runDoWhyEffect(
+    documentName: string,
+    treatment: string,
+    outcome: string,
+    method?: string
+  ): Promise<ApiResponse<{ estimate_value: number | null; interpretation: string | null; estimate: string; refutation: string }>> {
+    if (USE_LOCAL_BACKEND) {
+      const response = await this.request("/api/knowledge/causal-graph/dowhy", {
+        method: "POST",
+        body: JSON.stringify({
+          document_name: documentName,
+          treatment,
+          outcome,
+          method: method || "backdoor.linear_regression",
+        }),
+      });
+      return response;
+    }
+    return { success: false, error: "DoWhy requires local backend" };
+  }
+
+  // Causal Graph - Export (KB only, CSV only, single dataset, or all KB + datasets)
+  async exportCausalGraph(
+    source: "kb" | "data_only" | "all" | "dataset" = "all",
+    documentName?: string,
+    includeInferred: boolean = true
+  ): Promise<ApiResponse<any>> {
+    if (USE_LOCAL_BACKEND) {
+      const params = new URLSearchParams({
+        source,
+        include_inferred: includeInferred.toString(),
+      });
+      if (source === "dataset" && documentName) params.set("document_name", documentName);
+      const response = await this.request(`/api/knowledge/causal-graph/export?${params.toString()}`, { method: "GET" });
+      return response;
+    }
+    return { success: false, error: "Causal graph export requires local backend" };
+  }
+
   // Knowledge Graph - Updated for FastAPI
   async getKnowledgeGraph(): Promise<ApiResponse<any>> {
     if (USE_LOCAL_STORAGE) {
@@ -544,10 +654,111 @@ class HuggingFaceApiClient {
     return this.request("/api/documents", { method: "GET" });
   }
 
+  /** Dashboard stats for home page (documents, facts, nodes, connections). Returns 0s when empty. */
+  async getDashboardStats(): Promise<
+    ApiResponse<{
+      documents_count: number;
+      facts_count: number;
+      nodes_count: number;
+      connections_count: number;
+    }>
+  > {
+    if (USE_LOCAL_BACKEND) {
+      const response = await this.request("/api/dashboard/stats", { method: "GET" });
+      if (response.success && response.data) {
+        return {
+          success: true,
+          data: {
+            documents_count: response.data.documents_count ?? 0,
+            facts_count: response.data.facts_count ?? 0,
+            nodes_count: response.data.nodes_count ?? 0,
+            connections_count: response.data.connections_count ?? 0,
+          },
+        };
+      }
+      return response;
+    }
+    return {
+      success: true,
+      data: {
+        documents_count: 0,
+        facts_count: 0,
+        nodes_count: 0,
+        connections_count: 0,
+      },
+    };
+  }
+
   async deleteDocument(documentId: string): Promise<ApiResponse<any>> {
     return this.request(`/api/documents/${documentId}`, {
       method: "DELETE",
     });
+  }
+
+  // Simulator - Run Experiment
+  async runExperiment(experimentConfig: any): Promise<ApiResponse<any>> {
+    console.log('📡 API: runExperiment called with:', experimentConfig);
+    if (USE_LOCAL_BACKEND) {
+      const response = await this.request("/api/simulator/experiment", {
+        method: "POST",
+        body: JSON.stringify(experimentConfig),
+      }, 300000); // 5 minutes timeout for experiments
+      console.log('📡 API: runExperiment response:', response);
+      return response;
+    }
+    return {
+      success: false,
+      error: "Simulator requires local backend",
+    };
+  }
+
+  // Simulator - Test Scenario
+  async testScenario(scenarioData: any): Promise<ApiResponse<any>> {
+    console.log('📡 API: testScenario called with:', scenarioData);
+    if (USE_LOCAL_BACKEND) {
+      const response = await this.request("/api/simulator/scenario", {
+        method: "POST",
+        body: JSON.stringify(scenarioData),
+      }, 300000); // 5 minutes timeout for scenarios
+      console.log('📡 API: testScenario response:', response);
+      return response;
+    }
+    return {
+      success: false,
+      error: "Simulator requires local backend",
+    };
+  }
+
+  // Simulator - Get Experiments
+  async getExperiments(): Promise<ApiResponse<any>> {
+    console.log('📡 API: getExperiments called');
+    if (USE_LOCAL_BACKEND) {
+      const response = await this.request("/api/simulator/experiments", {
+        method: "GET",
+      });
+      console.log('📡 API: getExperiments response:', response);
+      return response;
+    }
+    return {
+      success: true,
+      data: { experiments: [] },
+    };
+  }
+
+  // Simulator - Delete Experiment
+  async deleteExperiment(experimentId: string): Promise<ApiResponse<any>> {
+    console.log('📡 API: deleteExperiment called with:', experimentId);
+    if (USE_LOCAL_BACKEND) {
+      const response = await this.request(`/api/simulator/experiments/${experimentId}`, {
+        method: "DELETE",
+      });
+      console.log('📡 API: deleteExperiment response:', response);
+      return response;
+    }
+    return {
+      success: false,
+      error: "Simulator requires local backend",
+    };
   }
 
   /** Reset app: erase all documents, knowledge base, and knowledge graph */

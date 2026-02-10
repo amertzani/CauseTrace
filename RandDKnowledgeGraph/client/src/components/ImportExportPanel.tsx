@@ -18,8 +18,11 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 
+export type CausalExportSource = "kb" | "data_only" | "all";
+
 interface ImportExportPanelProps {
   onExport: (includeInferred: boolean, minConfidence: number) => void;
+  onExportCausalGraph?: (source: CausalExportSource) => void;
   onImport: (file: File) => void;
   metadata?: {
     version: string;
@@ -28,7 +31,7 @@ interface ImportExportPanelProps {
   };
 }
 
-export function ImportExportPanel({ onExport, onImport, metadata }: ImportExportPanelProps) {
+export function ImportExportPanel({ onExport, onExportCausalGraph, onImport, metadata }: ImportExportPanelProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [includeInferred, setIncludeInferred] = useState(true);
@@ -134,6 +137,41 @@ export function ImportExportPanel({ onExport, onImport, metadata }: ImportExport
           </DialogContent>
         </Dialog>
       </Card>
+
+      {onExportCausalGraph && (
+        <Card className="p-6">
+          <h3 className="text-lg font-semibold mb-4">Export Causal Relationships</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            Download causal relationships as JSON. Choose what to include:
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={() => onExportCausalGraph("data_only")}
+              variant="outline"
+              data-testid="button-export-causal-csv"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              CSV only
+            </Button>
+            <Button
+              onClick={() => onExportCausalGraph("kb")}
+              variant="outline"
+              data-testid="button-export-causal-kb"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              KB only
+            </Button>
+            <Button
+              onClick={() => onExportCausalGraph("all")}
+              variant="outline"
+              data-testid="button-export-causal"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              KB + all CSV
+            </Button>
+          </div>
+        </Card>
+      )}
 
       <Card className="p-6">
         <h3 className="text-lg font-semibold mb-4">Import Knowledge Base</h3>

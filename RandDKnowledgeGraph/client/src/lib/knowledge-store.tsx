@@ -97,6 +97,7 @@ export function KnowledgeStoreProvider({ children }: KnowledgeStoreProviderProps
         sourceDocument: fact.sourceDocument || undefined,
         uploadedAt: fact.uploadedAt || undefined,
         isInferred: fact.isInferred || false,  // Include inferred status
+        agent: fact.agent || undefined,  // Include agent information
       });
     });
     
