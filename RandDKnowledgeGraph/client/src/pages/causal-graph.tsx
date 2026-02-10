@@ -316,7 +316,7 @@ export default function CausalGraphPage() {
                   <SelectValue placeholder="Dataset" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">{sourceMode === "both" ? "KB only (no dataset)" : "All datasets"}</SelectItem>
+                  <SelectItem value="all">{sourceMode === "both" ? "All datasets (KB + CSV)" : "All datasets"}</SelectItem>
                   {sources
                     .filter((s) => s.type === "dataset" && getUploadedDocNamesSession().includes(s.id))
                     .map((s) => (

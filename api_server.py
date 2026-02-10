@@ -158,6 +158,23 @@ def _is_test_document(name: str) -> bool:
         p in n for p in ("test_upload", "upload_test", "test_dataset", "test.csv")
     )
 
+
+def _list_csv_datasets(all_docs: Optional[List[Dict[str, Any]]] = None, include_test: bool = False) -> List[str]:
+    """Return CSV dataset names from documents store."""
+    if all_docs is None:
+        all_docs = get_all_documents()
+    datasets = []
+    for doc in all_docs:
+        doc_name = doc.get("name")
+        doc_type = (doc.get("type") or "").lower()
+        if doc_type != "csv":
+            continue
+        if not include_test and _is_test_document(doc_name or ""):
+            continue
+        if doc_name:
+            datasets.append(doc_name)
+    return datasets
+
 # ==========================================================
 # Request/Response Models
 # ==========================================================
@@ -816,10 +833,7 @@ async def get_causal_graph_endpoint(
         if source == "data_only":
             # Use same CSV list as sources endpoint (from documents_store); exclude test data
             all_docs = get_all_documents()
-            datasets = [
-                doc["name"] for doc in all_docs
-                if (doc.get("type") or "").lower() == "csv" and not _is_test_document(doc.get("name", ""))
-            ]
+            datasets = _list_csv_datasets(all_docs)
             to_merge = []
             for doc_name in datasets:
                 g = get_data_driven_causal_graph(doc_name)
@@ -836,17 +850,24 @@ async def get_causal_graph_endpoint(
             merged = _merge_causal_graphs(to_merge)
             return {**merged, "status": "success", "source": "data_only"}
         if source == "both":
-            kb_data = get_causal_graph_data(include_inferred=include_inferred)
             all_docs = get_all_documents()
             if document_name:
-                # Both + one dataset: KB merged with that dataset only (no merging of all CSVs)
+                # Both + one dataset: merge KB (filtered to that document) with dataset graph
                 doc = next((d for d in all_docs if d.get("name") == document_name), None)
                 doc_type = (doc.get("type") or "").lower() if doc else ""
                 if doc_type in ("csv", "xlsx"):
+                    kb_data = get_causal_graph_data(
+                        include_inferred=include_inferred,
+                        source_document_filter=document_name,
+                    )
                     g = get_data_driven_causal_graph(document_name)
+                    to_merge = [("kb", kb_data)]
                     if g and (g.get("nodes") or g.get("edges")):
-                        merged = _merge_causal_graphs([("kb", kb_data), (document_name, g)])
-                        return {**merged, "status": "success", "source": "both", "document_name": document_name}
+                        to_merge.append((document_name, g))
+                    merged = _merge_causal_graphs(to_merge)
+                    if len(to_merge) == 1:
+                        merged["warning"] = "No data-driven graph for this dataset. Re-upload the file to run discovery."
+                    return {**merged, "status": "success", "source": "both", "document_name": document_name}
                 # Non-CSV: KB filtered by document
                 causal_data = get_causal_graph_data(include_inferred=include_inferred, source_document_filter=document_name)
                 return {
@@ -857,15 +878,25 @@ async def get_causal_graph_endpoint(
                     "source": "both",
                     "document_name": document_name,
                 }
-            # Both without document_name: return KB only and tell client to pick one dataset
-            return {
-                "nodes": kb_data.get("nodes", []),
-                "edges": kb_data.get("edges", []),
-                "stats": kb_data.get("stats", {}),
-                "status": "success",
-                "source": "both",
-                "warning": "Select a dataset above to combine with the knowledge graph. Without a selection, only the KB graph is shown.",
-            }
+            # Both without document_name: merge KB + all datasets
+            kb_data = get_causal_graph_data(include_inferred=include_inferred)
+            datasets = _list_csv_datasets(all_docs)
+            to_merge = [("kb", kb_data)]
+            for doc_name in datasets:
+                g = get_data_driven_causal_graph(doc_name)
+                if g and (g.get("nodes") or g.get("edges")):
+                    to_merge.append((doc_name, g))
+            if len(to_merge) == 1:
+                return {
+                    "nodes": kb_data.get("nodes", []),
+                    "edges": kb_data.get("edges", []),
+                    "stats": kb_data.get("stats", {}),
+                    "status": "success",
+                    "source": "both",
+                    "warning": "No data-driven datasets found. Showing knowledge base only.",
+                }
+            merged = _merge_causal_graphs(to_merge)
+            return {**merged, "status": "success", "source": "both"}
         # source == "kb": optional document_name filters KB to that document only
         if source == "kb" and document_name:
             print(f"📊 Causal graph requested (include_inferred={include_inferred}, source=kb, document_name={document_name})")
